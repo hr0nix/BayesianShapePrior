@@ -64,6 +64,7 @@ namespace SegmentationGrid
             PositiveDefiniteMatrix[] shapeOrientations,
             Vector[] offsetMeans,
             Vector[] offsetPrecisions,
+            double[] partPresenseProbs,
             Gaussian[] shapeLocationPrior,
             double observationNoiseProb,
             double pottsPenalty,
@@ -84,6 +85,7 @@ namespace SegmentationGrid
                 gridHolder.ShapePartOffsetMeans[i][1].ObservedValue = offsetMeans[i][1];
                 gridHolder.ShapePartOffsetPrecisions[i][0].ObservedValue = offsetPrecisions[i][0];
                 gridHolder.ShapePartOffsetPrecisions[i][1].ObservedValue = offsetPrecisions[i][1];
+                gridHolder.ShapePartPresenseProbability[i].ObservedValue = partPresenseProbs[i];
             }
 
             // Sample
@@ -141,13 +143,13 @@ namespace SegmentationGrid
         //        i => Tuple.Create(trueShapeParams[i].Item1, Vector.FromArray(shapeXPosterior[i].GetMean(), shapeYPosterior[i].GetMean())));
         //}
 
-        private static void InferOffsetParams(
-            PositiveDefiniteMatrix[] shapeOrientations,
+        private static void LearnShapeModel(
+            IList<PositiveDefiniteMatrix> shapeOrientations,
             bool[][,] trainingSet,
             double observationNoiseProb,
             double pottsPenalty)
         {
-            int shapePartCount = shapeOrientations.Length;
+            int shapePartCount = shapeOrientations.Count;
 
             var gridHolder = new ImageModelFactorized(GridSize, GridSize, shapePartCount, trainingSet.Length);
             gridHolder.PottsPenalty.ObservedValue = pottsPenalty;
@@ -182,8 +184,8 @@ namespace SegmentationGrid
                             Vector.FromArray(shapePartLocationX[j][i].GetMean(), shapePartLocationY[j][i].GetMean())));
                     DrawShape(shapeParams).Save(string.Format("fitted_object_{0}_{1}.png", iterationCount, i));
                 }
-                
-                // Infer offsets
+
+                // Infer shape model
                 Gaussian[] shapeOffsetMeanXPosteriors = Util.ArrayInit(
                     shapePartCount,
                     i => engine.Infer<Gaussian>(gridHolder.ShapePartOffsetMeans[i][0]));
@@ -196,11 +198,15 @@ namespace SegmentationGrid
                 Gamma[] shapeOffsetPrecYPosteriors = Util.ArrayInit(
                     shapePartCount,
                     i => engine.Infer<Gamma>(gridHolder.ShapePartOffsetPrecisions[i][1]));
+                Beta[] shapePartPresesnseProb = Util.ArrayInit(
+                    shapePartCount,
+                    i => engine.Infer<Beta>(gridHolder.ShapePartPresenseProbability[i]));
 
                 Console.WriteLine("Offset mean X: {0}", StringUtil.ArrayToString(shapeOffsetMeanXPosteriors));
                 Console.WriteLine("Offset mean Y: {0}", StringUtil.ArrayToString(shapeOffsetMeanYPosteriors));
                 Console.WriteLine("Offset prec X: {0}", StringUtil.ArrayToString(shapeOffsetPrecXPosteriors));
                 Console.WriteLine("Offset prec Y: {0}", StringUtil.ArrayToString(shapeOffsetPrecYPosteriors));
+                Console.WriteLine("Presense prob: {0}", StringUtil.ArrayToString(shapePartPresesnseProb));
             }
         }
 
@@ -225,6 +231,7 @@ namespace SegmentationGrid
             //var shapeLocationPrior = new[] { Gaussian.FromMeanAndVariance(0.5, 0.2 * 0.2), Gaussian.FromMeanAndVariance(0.5, 0.2 * 0.2) };
 
             // 3 ellipses
+            var partPresenseProbs = new[] { 1.0, 1.0, 1.0 };
             var offsetMeans = new[] { Vector.FromArray(0.0, 0.0), Vector.FromArray(0.0, -0.2), Vector.FromArray(0.0, 0.2) };
             var offsetPrecisions = new[] { Vector.FromArray(1.0 / (0.01 * 0.01), 1.0 / (0.01 * 0.01)), Vector.FromArray(1.0 / (0.01 * 0.01), 1.0 / (0.01 * 0.01)), Vector.FromArray(1.0 / (0.1 * 0.1), 1.0 / (0.01 * 0.01)) };
             var shapeOrientations = new[] { EllipsePrecisionMatrix(0.1, 0.2, 0), EllipsePrecisionMatrix(0.02, 0.15, 0), EllipsePrecisionMatrix(0.2, 0.02, 0) };
@@ -233,7 +240,7 @@ namespace SegmentationGrid
             // Sample labels from true model
 
             bool[][,] sampledLabels = SampleNoisyLabels(
-                shapeOrientations, offsetMeans, offsetPrecisions, shapeLocationPrior, observationNoiseProb, pottsPenalty, trainingSetSize);
+                shapeOrientations, offsetMeans, offsetPrecisions, partPresenseProbs, shapeLocationPrior, observationNoiseProb, pottsPenalty, trainingSetSize);
 
             // Save samples
             for (int i = 0; i < sampledLabels.Length; ++i)
@@ -241,7 +248,18 @@ namespace SegmentationGrid
                 ImageHelpers.ArrayToBitmap(sampledLabels[i], b => b ? Color.Red : Color.Green).Save(string.Format("sampled_labels_{0}.png", i));
             }
 
-            InferOffsetParams(shapeOrientations, sampledLabels, observationNoiseProb, pottsPenalty);
+            // Add redundant shapes
+            var shapeOrientationsWithRedundant = new List<PositiveDefiniteMatrix>(shapeOrientations);
+            const int RedundantShapeCount = 1;
+            for (int i = 0; i < RedundantShapeCount; ++i)
+            {
+                double randomWidth = 0.02 + 0.2 * Rand.Double();
+                double randomHeight = 0.02 + 0.2 * Rand.Double();
+                double randomAngle = Math.PI * 2 * Rand.Double();
+                shapeOrientationsWithRedundant.Add(EllipsePrecisionMatrix(randomWidth, randomHeight, randomAngle));
+            }
+
+            LearnShapeModel(shapeOrientationsWithRedundant, sampledLabels, observationNoiseProb, pottsPenalty);
         }
 
         //private static void MainSampleRestore()

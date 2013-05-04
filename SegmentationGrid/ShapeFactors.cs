@@ -210,6 +210,31 @@ namespace SegmentationGrid
     [FactorMethod(typeof(ShapeFactors), "LabelFromShape", typeof(Vector), typeof(double), typeof(double), typeof(PositiveDefiniteMatrix))]
     public static class LabelFromShapeFactorizedOps
     {
+        #region Evidence
+
+        public static double LogAverageFactor(
+            Bernoulli label, Vector point, Gaussian shapeX, Gaussian shapeY, PositiveDefiniteMatrix shapeOrientation)
+        {
+            VectorGaussian shapeLocationTimesFactor = ShapeLocationTimesFactor(point, shapeX, shapeY, shapeOrientation);
+            double labelProbFalse = label.GetProbFalse();
+            double normalizerProduct = Math.Exp(
+                shapeLocationTimesFactor.GetLogNormalizer() - 0.5 * shapeOrientation.QuadraticForm(point)
+                - shapeX.GetLogNormalizer() - shapeY.GetLogNormalizer());
+            double averageFactor = labelProbFalse + (1 - 2 * labelProbFalse) * normalizerProduct;
+            Debug.Assert(averageFactor > 0);
+            return Math.Log(averageFactor);
+        }
+
+        public static double LogEvidenceRatio(
+            Bernoulli label, Bernoulli to_label, Vector point, Gaussian shapeX, Gaussian shapeY, PositiveDefiniteMatrix shapeOrientation)
+        {
+            return LogAverageFactor(label, point, shapeX, shapeY, shapeOrientation) - label.GetLogAverageOf(to_label);
+        }
+        
+        #endregion
+
+        #region EP and Gibbs
+
         public static Bernoulli LabelAverageConditional(
             Vector point, Gaussian shapeX, Gaussian shapeY, PositiveDefiniteMatrix shapeOrientation)
         {
@@ -235,6 +260,10 @@ namespace SegmentationGrid
         {
             return ShapeAverageConditional(point, label, shapeX, shapeY, shapeOrientation, false);
         }
+
+        #endregion
+
+        #region Helpers
 
         private static Gaussian ShapeAverageConditional(
             Vector point, Bernoulli label, Gaussian shapeX, Gaussian shapeY, PositiveDefiniteMatrix shapeOrientation, bool resultForXCoord)
@@ -269,5 +298,7 @@ namespace SegmentationGrid
             result.SetToProduct(shapeLocationDistr, factorDistribution);
             return result;
         }
+
+        #endregion
     }
 }
