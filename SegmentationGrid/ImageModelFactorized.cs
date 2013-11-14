@@ -10,7 +10,7 @@ using System.Collections.Generic;
 namespace SegmentationGrid
 {
     internal class ImageModelFactorized
-    {
+    {   
         public Range ObservationRange { get; private set; }
 
         public Range XYRange;
@@ -23,17 +23,19 @@ namespace SegmentationGrid
 
         // Shape model
 
-        public VariableArray<Bernoulli> ShapePartPresentedPrior { get; private set; }
-
-        public VariableArray<bool> ShapePartPresented { get; private set; }
-
         public VariableArray<Gaussian> ShapeLocationPrior { get; private set; }
 
         public VariableArray<VariableArray<double>, double[][]> ShapeLocation { get; private set; }
 
         public VariableArray<VariableArray<VariableArray<double>, double[][]>, double[][][]> ShapePartLocation { get; private set; }
 
-        public VariableArray<PositiveDefiniteMatrix> ShapePartOrientation { get; private set; }
+        public Variable<Wishart> ShapePartOrientationRatePrior { get; private set; }
+
+        public VariableArray<PositiveDefiniteMatrix> ShapePartOrientationPriorRates { get; private set; }
+
+        public Variable<double> ShapePartOrientationShape { get; private set; }
+        
+        public VariableArray<VariableArray<PositiveDefiniteMatrix>, PositiveDefiniteMatrix[][]> ShapePartOrientation { get; private set; }
 
         public VariableArray<VariableArray<Gaussian>, Gaussian[][]> ShapePartOffsetMeanPriors { get; private set; }
 
@@ -71,26 +73,35 @@ namespace SegmentationGrid
             //this.WidthRange.AddAttribute(new Sequential());
             //this.HeightRange.AddAttribute(new Sequential());
 
-            this.ShapePartPresentedPrior = Variable.Array<Bernoulli>(this.ShapePartRange).Named("shape_part_presented_prior");
-            this.ShapePartPresentedPrior.ObservedValue = Util.ArrayInit(shapePartCount, i => Bernoulli.Uniform());
-
-            this.ShapePartPresented = Variable.Array<bool>(this.ShapePartRange).Named("shape_part_presented");
-            this.ShapePartPresented[this.ShapePartRange] = Variable<bool>.Random(this.ShapePartPresentedPrior[this.ShapePartRange]);
-
             this.ShapePartOffsetMeanPriors =
                 Variable.Array(Variable.Array<Gaussian>(this.XYRange), this.ShapePartRange).Named("shape_offset_mean_prior");
             this.ShapePartOffsetMeanPriors.ObservedValue = Util.ArrayInit(
-                shapePartCount, i => Util.ArrayInit(2, j => Gaussian.FromMeanAndVariance(0.0, 0.5 * 0.5)));
+                shapePartCount, i => Util.ArrayInit(2, j => Gaussian.FromMeanAndVariance(0.0, 0.3 * 0.3)));
 
             this.ShapePartOffsetPrecisionPriors =
                 Variable.Array(Variable.Array<Gamma>(this.XYRange), this.ShapePartRange).Named("shape_offset_prec_prior");
             this.ShapePartOffsetPrecisionPriors.ObservedValue = Util.ArrayInit(
-                shapePartCount, i => Util.ArrayInit(2, j => Gamma.FromMeanAndVariance(1.0 / (0.05 * 0.05), 400 * 400)));
+                shapePartCount, i => Util.ArrayInit(2, j => Gamma.FromMeanAndVariance(1.0 / (0.01 * 0.01), 50 * 50)));
 
             this.ShapePartOffsetMeans =
                 Variable.Array(Variable.Array<double>(this.XYRange), this.ShapePartRange).Named("shape_part_offset_mean");
             this.ShapePartOffsetMeans[this.ShapePartRange][this.XYRange] =
                 Variable<double>.Random(this.ShapePartOffsetMeanPriors[this.ShapePartRange][this.XYRange]);
+
+            // Break symmetry by ordering offset means
+            //using (var iterationBlock = Variable.ForEach(this.ShapePartRange))
+            //{
+            //    using (Variable.If(iterationBlock.Index > 0))
+            //    {
+            //        Variable<int> index = iterationBlock.Index;
+            //        //Variable.ConstrainTrue(
+            //        //    (this.ShapePartOffsetMeans[index][0] > this.ShapePartOffsetMeans[index - 1][0]) |
+            //        //    (this.ShapePartOffsetMeans[index][0] <= this.ShapePartOffsetMeans[index - 1][0] & this.ShapePartOffsetMeans[index][1] > this.ShapePartOffsetMeans[index][1]));
+            //        Variable.ConstrainPositive(this.ShapePartOffsetMeans[index][1] - this.ShapePartOffsetMeans[index - 1][1]);
+            //    }
+            //}
+            // TODO: workaround, the code above does not compile
+            //Variable.ConstrainTrue(this.ShapePartOffsetMeans[0][1] > this.ShapePartOffsetMeans[1][1]);
 
             this.ShapePartOffsetPrecisions =
                 Variable.Array(Variable.Array<double>(this.XYRange), this.ShapePartRange).Named("shape_part_offset_prec");
@@ -98,41 +109,44 @@ namespace SegmentationGrid
                 Variable<double>.Random(this.ShapePartOffsetPrecisionPriors[this.ShapePartRange][this.XYRange]);
 
             this.ShapeLocationPrior = Variable.Array<Gaussian>(this.XYRange).Named("shape_location_prior");
-            this.ShapeLocationPrior.ObservedValue = Util.ArrayInit(2, j => Gaussian.FromMeanAndVariance(0.5, 0.5 * 0.5));
+            this.ShapeLocationPrior.ObservedValue = Util.ArrayInit(2, j => Gaussian.FromMeanAndVariance(0.5, 0.3 * 0.3));
 
             this.ShapeLocation = Variable.Array(Variable.Array<double>(this.XYRange), this.ObservationRange).Named("shape_location");
             this.ShapeLocation[this.ObservationRange][this.XYRange] =
                 Variable<double>.Random(this.ShapeLocationPrior[this.XYRange]).ForEach(this.ObservationRange);
 
             this.ShapePartLocation = Variable
-                .Array(Variable.Array(Variable.Array<double>(this.XYRange), this.ShapePartRange), this.ObservationRange)
-                .Named("shape_part_location");
-            this.ShapePartLocation[this.ObservationRange][this.ShapePartRange][this.XYRange] =
-                this.ShapeLocation[this.ObservationRange][this.XYRange] +
-                Variable.GaussianFromMeanAndPrecision(this.ShapePartOffsetMeans[this.ShapePartRange][this.XYRange], this.ShapePartOffsetPrecisions[this.ShapePartRange][this.XYRange])
-                        .ForEach(this.ObservationRange)
-                        .Named("shape_part_offset");
+                .Array(Variable.Array(Variable.Array<double>(this.XYRange), this.ShapePartRange), this.ObservationRange).Named("shape_part_location");
+            this.ShapePartLocation.AddAttribute(new PointEstimate());
+            this.ShapePartLocation.InitialiseTo(Distribution<double>.Array(Util.ArrayInit(observationCount, i => Util.ArrayInit(shapePartCount, j => Util.ArrayInit(2, k => Gaussian.PointMass(0.45 + 0.1 * Rand.Double()))))));
 
-            // Break symmetry
-            var shapePartOffsetMeansTranspose =
-                Variable.Array(Variable.Array<double>(this.ShapePartRange), this.XYRange).Named("shape_part_mean_offset_transposed");
-            shapePartOffsetMeansTranspose[this.XYRange][this.ShapePartRange] =
-                Variable.Copy(this.ShapePartOffsetMeans[this.ShapePartRange][this.XYRange]);
-            Variable.ConstrainEqual(Variable.Sum(shapePartOffsetMeansTranspose[this.XYRange]), 0);
+            const double DefaultShapePartOrientationShape = 500;
+            const double DefaultOrientationPriorShape = 5.0;
+            const double MeanEllipseHalfSize = 0.2;
             
-            //using (Variable.ForEach(this.ObservationRange))
-            //{
-            //    var shapePartLocationTransposed =
-            //        Variable.Array(Variable.Array<double>(this.ShapePartRange), this.XYRange).Named("shape_part_location_transposed");
-            //    shapePartLocationTransposed[this.XYRange][this.ShapePartRange] =
-            //        Variable.Copy(this.ShapePartLocation[this.ObservationRange][this.ShapePartRange][this.XYRange]);
-            //    var shapePartLocationCoordSum =
-            //        Variable.Sum(shapePartLocationTransposed[this.XYRange]).Named("shape_part_location_coord_sum");
-            //    Variable.ConstrainEqual(shapePartLocationCoordSum, 0);
-            //}
+            this.ShapePartOrientationRatePrior = Variable.New<Wishart>().Named("shape_part_orientation_prior");
+            this.ShapePartOrientationRatePrior.ObservedValue = Wishart.FromShapeAndRate(
+                    DefaultOrientationPriorShape, PositiveDefiniteMatrix.IdentityScaledBy(2, DefaultOrientationPriorShape / (DefaultShapePartOrientationShape * MeanEllipseHalfSize * MeanEllipseHalfSize)));
 
-            this.ShapePartOrientation = Variable.Array<PositiveDefiniteMatrix>(this.ShapePartRange).Named("shape_part_orientation");
+            this.ShapePartOrientationPriorRates = Variable.Array<PositiveDefiniteMatrix>(this.ShapePartRange).Named("shape_part_prior_rate");
+            this.ShapePartOrientationPriorRates[this.ShapePartRange] = Variable<PositiveDefiniteMatrix>.Random(this.ShapePartOrientationRatePrior).ForEach(this.ShapePartRange);
 
+            this.ShapePartOrientationShape = Variable.Observed(DefaultShapePartOrientationShape);
+            this.ShapePartOrientation = Variable.Array(Variable.Array<PositiveDefiniteMatrix>(this.ShapePartRange), this.ObservationRange).Named("shape_part_orientation");
+            this.ShapePartOrientation.AddAttribute(new PointEstimate());
+            this.ShapePartOrientation.InitialiseTo(Distribution<PositiveDefiniteMatrix>.Array(
+                Util.ArrayInit(observationCount, i => Util.ArrayInit(shapePartCount, j => Wishart.PointMass(PositiveDefiniteMatrix.IdentityScaledBy(2, (0.9 + Rand.Double() * 0.2) / (MeanEllipseHalfSize * MeanEllipseHalfSize)))))));
+
+            using (Variable.ForEach(this.ObservationRange))
+            {
+                this.ShapePartLocation[this.ObservationRange][this.ShapePartRange][this.XYRange] =
+                    this.ShapeLocation[this.ObservationRange][this.XYRange] +
+                    Variable.GaussianFromMeanAndPrecision(this.ShapePartOffsetMeans[this.ShapePartRange][this.XYRange], this.ShapePartOffsetPrecisions[this.ShapePartRange][this.XYRange])
+                    .Named("shape_part_offset");
+                this.ShapePartOrientation[this.ObservationRange][this.ShapePartRange] = Variable.WishartFromShapeAndRate(
+                    this.ShapePartOrientationShape, this.ShapePartOrientationPriorRates[this.ShapePartRange]);
+            }
+            
             this.ObservationNoiseProbabilityPrior = Variable.New<Beta>().Named("observation_noise_prob_prior");
             this.ObservationNoiseProbabilityPrior.ObservedValue = new Beta(1, 50);
             this.ObservationNoiseProbability = Variable.Random<double, Beta>(this.ObservationNoiseProbabilityPrior).Named("observation_noise_prob");
@@ -150,55 +164,30 @@ namespace SegmentationGrid
                 Variable.Array<VariableArray2D<bool>, bool[][,]>(Variable.Array<bool>(this.WidthRange, this.HeightRange), this.ObservationRange)
                         .Named("observed_labels");
 
-            var labelsByPart =
-                Variable.Array<VariableArray2D<VariableArray<bool>, bool[,][]>, bool[][,][]>(
-                    Variable.Array(Variable.Array<bool>(this.ShapePartRange), this.WidthRange, this.HeightRange), this.ObservationRange)
-                        .Named("labels_by_part");
-            using (Variable.ForEach(this.ShapePartRange))
-            {
-                using (Variable.If(this.ShapePartPresented[this.ShapePartRange]))
-                {
-                    using (Variable.ForEach(this.ObservationRange))
-                    using (Variable.ForEach(this.WidthRange))
-                    using (Variable.ForEach(this.HeightRange))
-                    {
-                        const double damping = 0.001;
-                        VariableArray<double> dampedShapePartLocations = Variable.Array<double>(this.XYRange);
-                        dampedShapePartLocations[this.XYRange] =
-                            Variable<double>.Factor(Damp.Backward<double>, this.ShapePartLocation[this.ObservationRange][this.ShapePartRange][this.XYRange], damping)
-                                            .Named("damped_shape_part_location");
-
-                        labelsByPart[this.ObservationRange][this.WidthRange, this.HeightRange][this.ShapePartRange] = Variable<bool>.Factor(
-                            ShapeFactors.LabelFromShape,
-                            this.PixelCoords[this.WidthRange, this.HeightRange],
-                            dampedShapePartLocations[0],
-                            dampedShapePartLocations[1],
-                            this.ShapePartOrientation[this.ShapePartRange]);
-                    }
-                }
-
-                using (Variable.IfNot(this.ShapePartPresented[this.ShapePartRange]))
-                {
-                    using (Variable.ForEach(this.WidthRange))
-                    using (Variable.ForEach(this.HeightRange))
-                    {
-                        labelsByPart[this.ObservationRange][this.WidthRange, this.HeightRange][this.ShapePartRange] = false;
-                    }
-                }
-            }
-
             using (Variable.ForEach(this.ObservationRange))
             using (Variable.ForEach(this.WidthRange))
             using (Variable.ForEach(this.HeightRange))
             {
-                this.Labels[this.ObservationRange][this.WidthRange, this.HeightRange] =
-                    Variable<bool>.Factor(Factors.AnyTrue, labelsByPart[this.ObservationRange][this.WidthRange, this.HeightRange]);
+                var labelsByPart = Variable.Array<bool>(this.ShapePartRange).Named("labels_by_part");
+
+                using (Variable.ForEach(this.ShapePartRange))
+                {
+                    labelsByPart[this.ShapePartRange] = Variable<bool>.Factor(
+                        ShapeFactors.LabelFromShape,
+                        this.PixelCoords[this.WidthRange, this.HeightRange],
+                        this.ShapePartLocation[this.ObservationRange][this.ShapePartRange][0],
+                        this.ShapePartLocation[this.ObservationRange][this.ShapePartRange][1],
+                        this.ShapePartOrientation[this.ObservationRange][this.ShapePartRange]);
+                }
+                
+                this.Labels[this.ObservationRange][this.WidthRange, this.HeightRange] = Variable<bool>.Factor(Factors.AnyTrue, labelsByPart);
 
                 using (Variable.If(this.Labels[this.ObservationRange][this.WidthRange, this.HeightRange]))
                 {
                     this.ObservedLabels[this.ObservationRange][this.WidthRange, this.HeightRange] =
                         !Variable.Bernoulli(this.ObservationNoiseProbability);
                 }
+
                 using (Variable.IfNot(this.Labels[this.ObservationRange][this.WidthRange, this.HeightRange]))
                 {
                     this.ObservedLabels[this.ObservationRange][this.WidthRange, this.HeightRange] =
@@ -226,12 +215,12 @@ namespace SegmentationGrid
             }
         }
 
-        public bool[][,] Sample(int sampleCount)
+        public void Sample(int sampleCount, out bool[][,] labels, out double[][][] locations, out PositiveDefiniteMatrix[][] orientations)
         {
-            bool[] shapePartPresense = Util.ArrayInit(
-                this.ShapePartRange.SizeAsInt, i => this.ShapePartPresentedPrior.ObservedValue[i].Sample());
+            labels = new bool[sampleCount][,];
+            locations = new double[sampleCount][][];
+            orientations = new PositiveDefiniteMatrix[sampleCount][];
 
-            bool[][,] result = new bool[sampleCount][,];
             for (int sample = 0; sample < sampleCount; ++sample)
             {
                 // Sample locations from priors
@@ -239,8 +228,8 @@ namespace SegmentationGrid
                 double locationY = this.ShapeLocationPrior.ObservedValue[1].Sample();
 
                 // Sample shape part locations
-                List<double> shapePartLocationX = new List<double>();
-                List<double> shapePartLocationY = new List<double>();
+                locations[sample] = new double[this.ShapePartRange.SizeAsInt][];
+                orientations[sample] = new PositiveDefiniteMatrix[this.ShapePartRange.SizeAsInt];
 
                 for (int i = 0; i < this.ShapePartRange.SizeAsInt; ++i)
                 {
@@ -248,12 +237,14 @@ namespace SegmentationGrid
                         Gaussian.FromMeanAndPrecision(this.ShapePartOffsetMeans.ObservedValue[i][0], this.ShapePartOffsetPrecisions.ObservedValue[i][1]).Sample();
                     double y = locationY +
                         Gaussian.FromMeanAndPrecision(this.ShapePartOffsetMeans.ObservedValue[i][1], this.ShapePartOffsetPrecisions.ObservedValue[i][1]).Sample();
+                    PositiveDefiniteMatrix orientation = Wishart.SampleFromShapeAndRate(
+                        this.ShapePartOrientationShape.ObservedValue, this.ShapePartOrientationPriorRates.ObservedValue[i]);
 
-                    shapePartLocationX.Add(x);
-                    shapePartLocationY.Add(y);
+                    locations[sample][i] = new[] { x, y };
+                    orientations[sample][i] = orientation;
                 }
 
-                result[sample] = new bool[this.WidthRange.SizeAsInt, this.HeightRange.SizeAsInt];
+                labels[sample] = new bool[this.WidthRange.SizeAsInt, this.HeightRange.SizeAsInt];
                 for (int i = 0; i < this.WidthRange.SizeAsInt; ++i)
                 {
                     for (int j = 0; j < this.HeightRange.SizeAsInt; ++j)
@@ -261,14 +252,11 @@ namespace SegmentationGrid
                         bool label = false;
                         for (int k = 0; k < this.ShapePartRange.SizeAsInt; ++k)
                         {
-                            if (shapePartPresense[k])
-                            {
-                                label |= ShapeFactors.LabelFromShape(
-                                    this.PixelCoords.ObservedValue[i, j],
-                                    shapePartLocationX[k],
-                                    shapePartLocationY[k],
-                                    this.ShapePartOrientation.ObservedValue[k]);
-                            }
+                            label |= ShapeFactors.LabelFromShape(
+                                this.PixelCoords.ObservedValue[i, j],
+                                locations[sample][k][0],
+                                locations[sample][k][1],
+                                orientations[sample][k]);
                         }
 
                         if (Rand.Double() < this.ObservationNoiseProbability.ObservedValue)
@@ -276,12 +264,10 @@ namespace SegmentationGrid
                             label = !label;
                         }
 
-                        result[sample][i, j] = label;
+                        labels[sample][i, j] = label;
                     }
                 }
             }
-
-            return result;
         }
 
         public IVariable[] GetVariablesForSegmentation()
@@ -298,11 +284,23 @@ namespace SegmentationGrid
         {
             return new IVariable[]
             {
-                this.ShapePartLocation /* remove me? */,
-                this.ShapePartPresented,
+                this.ShapePartLocation,
+                this.ShapePartOrientation,
                 this.ShapePartOffsetMeans,
-                this.ShapePartOffsetPrecisions
+                this.ShapePartOffsetPrecisions,
+                this.ShapePartOrientationPriorRates
             };
+        }
+
+        private static PositiveDefiniteMatrix Diagonal(Vector diag)
+        {
+            PositiveDefiniteMatrix result = PositiveDefiniteMatrix.Identity(diag.Count);
+            for (int i = 0; i < diag.Count; ++i)
+            {
+                result[i, i] = diag[i];
+            }
+
+            return result;
         }
     }
 }

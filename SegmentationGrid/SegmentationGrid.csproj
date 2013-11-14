@@ -32,13 +32,13 @@
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
-    <Reference Include="Infer.Compiler, Version=2.5.30131.0, Culture=neutral, PublicKeyToken=e4813102a62778da, processorArchitecture=MSIL">
+    <Reference Include="Infer.Compiler, Version=2.5.30530.0, Culture=neutral, PublicKeyToken=e4813102a62778da, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\References\Infer.Compiler.dll</HintPath>
+      <HintPath>..\..\mlp\infernet\Infer2\Compiler\bin\Release\Infer.Compiler.dll</HintPath>
     </Reference>
-    <Reference Include="Infer.Runtime, Version=2.5.30131.0, Culture=neutral, PublicKeyToken=e4813102a62778da, processorArchitecture=MSIL">
+    <Reference Include="Infer.Runtime, Version=2.5.30530.0, Culture=neutral, PublicKeyToken=e4813102a62778da, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
-      <HintPath>..\References\Infer.Runtime.dll</HintPath>
+      <HintPath>..\..\mlp\infernet\Infer2\Compiler\bin\Release\Infer.Runtime.dll</HintPath>
     </Reference>
     <Reference Include="System" />
     <Reference Include="System.Core" />
@@ -52,6 +52,7 @@
   <ItemGroup>
     <Compile Include="Factors.cs" />
     <Compile Include="ImageModelFactorized.cs" />
+    <Compile Include="MathHelpers.cs" />
     <Compile Include="VectorGaussianWishart.cs" />
     <Compile Include="ImageModelFullCovariance.cs" />
     <Compile Include="GridFactors.cs" />

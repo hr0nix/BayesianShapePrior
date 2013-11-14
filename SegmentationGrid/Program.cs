@@ -11,6 +11,8 @@ using MicrosoftResearch.Infer.Maths;
 using MicrosoftResearch.Infer.Models;
 using MicrosoftResearch.Infer.Utils;
 
+using ShapePart = System.Tuple<MicrosoftResearch.Infer.Maths.PositiveDefiniteMatrix, MicrosoftResearch.Infer.Maths.Vector>;
+
 namespace SegmentationGrid
 {
     using BernoulliArray1D = DistributionStructArray<Bernoulli, bool>;
@@ -18,158 +20,225 @@ namespace SegmentationGrid
     using BernoulliArray2D = DistributionRefArray<DistributionStructArray<Bernoulli, bool>, bool[]>;
     using GammaArray2D = DistributionRefArray<DistributionStructArray<Gamma, double>, double[]>;
     using GaussianArray3D = DistributionRefArray<DistributionRefArray<DistributionStructArray<Gaussian, double>, double[]>, double[][]>;
+    using ShapePartArray2D = DistributionRefArray<DistributionRefArray<VectorGaussianWishart, ShapePart>, ShapePart[]>;
+    using WishartArray1D = DistributionRefArray<Wishart, PositiveDefiniteMatrix>;
+    using WishartArray2D = DistributionRefArray<DistributionRefArray<Wishart, PositiveDefiniteMatrix>, PositiveDefiniteMatrix[]>;
+    using System.IO;
+    using System.Drawing.Imaging;
 
     class Program
     {
-        const int GridSize = 120;
-
         private static void Main()
         {
             Rand.Restart(666);
 
-            const double observationNoiseProb = 0.01;
+            const double observationNoiseProb = 0.1;
             const double pottsPenalty = 0.9;
-            const int trainingSetSize = 20;
 
             // 1 ellipse
-            //var offsetMeans = new Vector[0];
-            //var offsetPrecisions = new Vector[0];
-            //var shapeOrientations = new[] { EllipsePrecisionMatrix(0.2, 0.05, 0) };
-            //var shapeLocationPrior = new[] { Gaussian.FromMeanAndVariance(0.5, 0.2 * 0.2), Gaussian.FromMeanAndVariance(0.5, 0.3 * 0.3) };
+            //var offsetMeans = new[] { Vector.FromArray(0.0, 0.0) };
+            //var offsetPrecisions = new[] { Vector.FromArray(1.0 / (0.1 * 0.1), 1.0 / (0.1 * 0.1)) };
+            //var orientationNoiseShape = 10;
+            //var shapeOrientationRates = new[] { EllipsePrecisionMatrix(0.22, 0.08, Math.PI * 0.33).Inverse() * orientationNoiseShape };
+            //var shapeLocationPrior = new[] { Gaussian.FromMeanAndVariance(0.5, 0.1 * 0.1), Gaussian.FromMeanAndVariance(0.5, 0.1 * 0.1) };
 
-            // 2 ellipses
-            //var offsetMeans = new[] { Vector.FromArray(0.0, 0.2) };
-            //var offsetPrecisions = new[] { Vector.FromArray(1.0 / (0.3 * 0.3), 1.0 / (0.1 * 0.1)) };
-            //var shapeOrientations = new[] { EllipsePrecisionMatrix(0.2, 0.05, 0), EllipsePrecisionMatrix(0.1, 0.3, 0) };
+            // 2 ellipses 1
+            //var offsetMeans = new[] { Vector.FromArray(0.0, 0.0), Vector.FromArray(0.0, 0.0) };
+            //var offsetPrecisions = new[] { Vector.FromArray(1.0 / (0.05 * 0.05), 1.0 / (0.05 * 0.05)), Vector.FromArray(1.0 / (0.05 * 0.05), 1.0 / (0.05 * 0.05)) };
+            //var orientationNoiseShape = 10;
+            //var shapeOrientationRates = new[]
+            //{
+            //    EllipsePrecisionMatrix(0.3, 0.05, Math.PI * 0.25).Inverse() * orientationNoiseShape,
+            //    EllipsePrecisionMatrix(0.2, 0.07, Math.PI * 0.75).Inverse() * orientationNoiseShape
+            //};
             //var shapeLocationPrior = new[] { Gaussian.FromMeanAndVariance(0.5, 0.2 * 0.2), Gaussian.FromMeanAndVariance(0.5, 0.2 * 0.2) };
 
-            // 3 ellipses
-            var offsetMeans = new[] { Vector.FromArray(0.0, 0.0), Vector.FromArray(0.0, -0.2), Vector.FromArray(0.0, 0.2) };
-            var offsetPrecisions = new[] { Vector.FromArray(1.0 / (0.01 * 0.01), 1.0 / (0.01 * 0.01)), Vector.FromArray(1.0 / (0.01 * 0.01), 1.0 / (0.01 * 0.01)), Vector.FromArray(1.0 / (0.1 * 0.1), 1.0 / (0.01 * 0.01)) };
-            var shapeOrientations = new[] { EllipsePrecisionMatrix(0.1, 0.2, 0), EllipsePrecisionMatrix(0.02, 0.15, 0), EllipsePrecisionMatrix(0.2, 0.02, 0) };
-            var shapeLocationPrior = new[] { Gaussian.FromMeanAndVariance(0.5, 0.1 * 0.1), Gaussian.FromMeanAndVariance(0.5, 0.1 * 0.1) };
+            // 2 ellipses 2
+            //var offsetMeans = new[] { Vector.FromArray(0.0, -0.17), Vector.FromArray(0.0, 0.0) };
+            //var offsetPrecisions = new[] { Vector.FromArray(1.0 / (0.05 * 0.05), 1.0 / (0.05 * 0.05)), Vector.FromArray(1.0 / (0.05 * 0.05), 1.0 / (0.05 * 0.05)) };
+            //var orientationNoiseShape = 10;
+            //var shapeOrientationRates = new[]
+            //{
+            //    EllipsePrecisionMatrix(0.2, 0.05, 0.0).Inverse() * orientationNoiseShape,
+            //    EllipsePrecisionMatrix(0.05, 0.3, 0.0).Inverse() * orientationNoiseShape
+            //};
+            //var shapeLocationPrior = new[] { Gaussian.FromMeanAndVariance(0.5, 0.2 * 0.2), Gaussian.FromMeanAndVariance(0.5, 0.2 * 0.2) };
+
+            // 3 ellipses 1
+            //var offsetMeans = new[] { Vector.FromArray(0.0, 0.0), Vector.FromArray(0.0, -0.2), Vector.FromArray(0.0, 0.2) };
+            //var offsetPrecisions = new[] { Vector.FromArray(1.0 / (0.01 * 0.01), 1.0 / (0.01 * 0.01)), Vector.FromArray(1.0 / (0.01 * 0.01), 1.0 / (0.01 * 0.01)), Vector.FromArray(1.0 / (0.1 * 0.1), 1.0 / (0.01 * 0.01)) };
+            //var orientationNoiseShape = 10;
+            //var shapeOrientationRates = new[]
+            //{
+            //    EllipsePrecisionMatrix(0.1, 0.2, 0).Inverse() * orientationNoiseShape,
+            //    EllipsePrecisionMatrix(0.02, 0.15, 0).Inverse() * orientationNoiseShape,
+            //    EllipsePrecisionMatrix(0.2, 0.02, 0).Inverse() * orientationNoiseShape
+            //};
+            //var shapeLocationPrior = new[] { Gaussian.FromMeanAndVariance(0.5, 0.1 * 0.1), Gaussian.FromMeanAndVariance(0.5, 0.1 * 0.1) };
+
+            // 3 ellipses 2
+            //var offsetMeans = new[] { Vector.FromArray(0.0, 0.0), Vector.FromArray(-0.2, 0.3), Vector.FromArray(0.2, 0.3) };
+            //var offsetPrecisions = new[] { Vector.FromArray(1.0 / (0.02 * 0.02), 1.0 / (0.02 * 0.02)), Vector.FromArray(1.0 / (0.02 * 0.02), 1.0 / (0.02 * 0.02)), Vector.FromArray(1.0 / (0.02 * 0.02), 1.0 / (0.02 * 0.02)) };
+            //var orientationNoiseShape = 10;
+            //var shapeOrientationRates = new[]
+            //{
+            //    EllipsePrecisionMatrix(0.3, 0.1, 0).Inverse() * orientationNoiseShape,
+            //    EllipsePrecisionMatrix(0.03, 0.3, 0).Inverse() * orientationNoiseShape,
+            //    EllipsePrecisionMatrix(0.03, 0.3, 0).Inverse() * orientationNoiseShape
+            //};
+            //var shapeLocationPrior = new[] { Gaussian.FromMeanAndVariance(0.5, 0.1 * 0.1), Gaussian.FromMeanAndVariance(0.5, 0.1 * 0.1) };
 
             // Sample labels from true model
 
-            bool[][,] sampledLabels = SampleNoisyLabels(
-                shapeOrientations, offsetMeans, offsetPrecisions, shapeLocationPrior, observationNoiseProb, pottsPenalty, trainingSetSize);
+            //bool[][,] labels;
+            //double[][][] locations;
+            //PositiveDefiniteMatrix[][] orientations;
+            //const int trainingSetSize = 10;
+            //const int gridSize = 100;
+            //SampleNoisyLabels(
+            //    offsetMeans,
+            //    offsetPrecisions,
+            //    shapeLocationPrior,
+            //    shapeOrientationRates,
+            //    orientationNoiseShape,
+            //    observationNoiseProb,
+            //    pottsPenalty,
+            //    trainingSetSize,
+            //    gridSize,
+            //    out labels,
+            //    out locations,
+            //    out orientations);
+
+            //// Draw the desired shape model
+            //DrawShapeModel(offsetMeans, shapeOrientationRates, orientationNoiseShape).Save("true_shape_model.png");
+
+            //int shapePartCount = shapeOrientationRates.Length;
+
+            bool[][,] labels = LoadLabels("../../../Data/horses/figure_ground", 10);
+            const int shapePartCount = 8;
 
             // Save samples
-            for (int i = 0; i < sampledLabels.Length; ++i)
+            for (int i = 0; i < labels.Length; ++i)
             {
-                ImageHelpers.ArrayToBitmap(sampledLabels[i], b => b ? Color.Red : Color.Green).Save(string.Format("sampled_labels_{0}.png", i));
+                ImageHelpers.ArrayToBitmap(labels[i], b => b ? Color.Red : Color.Green).Save(string.Format("sampled_labels_{0}.png", i));
             }
 
-            var shapeOrientationsToFit = new List<PositiveDefiniteMatrix>();
-
-            // Add slightly modified initial shapes
-            for (int i = 0; i < shapeOrientations.Count(); ++i)
-            {
-                const double ScaleNoiseAmplitude = 0.0;
-                const double AngleNoiseAmplitude = 0.0;
-                
-                double stdDev1, stdDev2, angle;
-                ExtractScaleAndAngle(shapeOrientations[i], out stdDev1, out stdDev2, out angle);
-                stdDev1 = Math.Max(0.001, stdDev1 + (Rand.Double() * 2 - 1) * ScaleNoiseAmplitude);
-                stdDev2 = Math.Max(0.001, stdDev2 + (Rand.Double() * 2 - 1) * ScaleNoiseAmplitude);
-                angle += (Rand.Double() * 2 - 1) * Math.PI * AngleNoiseAmplitude;
-                shapeOrientationsToFit.Add(EllipsePrecisionMatrix(stdDev1, stdDev2, angle));
-            }
-            
-            // Add redundant shapes
-            const int RedundantShapeCount = 7;
-            for (int i = 0; i < RedundantShapeCount; ++i)
-            {
-                double randomWidth = 0.02 + 0.2 * Rand.Double();
-                double randomHeight = 0.02 + 0.2 * Rand.Double();
-                double randomAngle = Math.PI * 2 * Rand.Double();
-
-                PositiveDefiniteMatrix shapeOrientation = EllipsePrecisionMatrix(randomWidth, randomHeight, randomAngle);
-
-                // TODO: remove condition
-                if (i != 3)
-                {
-                    shapeOrientationsToFit.Add(shapeOrientation);
-                }
-            }
-
-            LearnShapeModel(shapeOrientationsToFit.ToArray(), sampledLabels, observationNoiseProb, pottsPenalty);
+            LearnShapeModel(labels[0].GetLength(0), labels[0].GetLength(1), shapePartCount, labels, observationNoiseProb, pottsPenalty);
         }
 
-        private static bool[][,] SampleNoisyLabels(
-            PositiveDefiniteMatrix[] shapeOrientations,
+        private static bool[][,] LoadLabels(string path, int maxImagesToLoad)
+        {
+            List<Bitmap> bitmaps = new List<Bitmap>();
+
+            int minWidth = int.MaxValue, minHeight = int.MaxValue;
+            foreach (string imagePath in Directory.EnumerateFiles(path))
+            {
+                if (bitmaps.Count == maxImagesToLoad)
+                {
+                    break;
+                }
+
+                Bitmap bitmap = new Bitmap(imagePath);
+                bitmaps.Add(bitmap);
+                minWidth = Math.Min(minWidth, bitmap.Width);
+                minHeight = Math.Min(minHeight, bitmap.Height);
+            }
+
+            bool[][,] result = new bool[bitmaps.Count][,];
+            for (int i = 0; i < bitmaps.Count; ++i)
+            {
+                Rectangle subImageRect = new Rectangle((bitmaps[i].Width - minWidth) / 2, (bitmaps[i].Height - minHeight) / 2, minWidth, minHeight);
+                Bitmap croppedBitmap = bitmaps[i].Clone(subImageRect, PixelFormat.Format24bppRgb);
+                result[i] = ImageHelpers.BitmapToArray(croppedBitmap, c => c.R > 0);
+            }
+
+            return result;
+        }
+
+        private static void SampleNoisyLabels(
+            int gridWidth,
+            int gridHeight,
             Vector[] offsetMeans,
             Vector[] offsetPrecisions,
             Gaussian[] shapeLocationPrior,
+            PositiveDefiniteMatrix[] shapePartOrientationRates,
+            double orientationNoiseShape,
             double observationNoiseProb,
             double pottsPenalty,
-            int count)
+            int count,
+            out bool[][,] labels,
+            out double[][][] locations,
+            out PositiveDefiniteMatrix[][] orientations)
         {
-            int shapePartCount = shapeOrientations.Length;
+            int shapePartCount = offsetMeans.Length;
 
-            //var gridHolder = new ImageModelFullCovariance(GridSize, GridSize, shapeParams.Length);
-            var gridHolder = new ImageModelFactorized(GridSize, GridSize, shapePartCount, 1);
+            //var gridHolder = new ImageModelFullCovariance(gridWidth, gridHeight, shapeParams.Length);
+            var gridHolder = new ImageModelFactorized(gridWidth, gridHeight, shapePartCount, 1);
 
             // Specify sampling model
             gridHolder.ShapeLocationPrior.ObservedValue = shapeLocationPrior;
-            gridHolder.ShapePartOrientation.ObservedValue = shapeOrientations;
+            gridHolder.ShapePartOrientationPriorRates.ObservedValue = shapePartOrientationRates;
+            gridHolder.ShapePartOrientationShape.ObservedValue = orientationNoiseShape;
             gridHolder.ObservationNoiseProbability.ObservedValue = observationNoiseProb;
             gridHolder.PottsPenalty.ObservedValue = pottsPenalty;
             gridHolder.ShapePartOffsetMeans.ObservedValue = Util.ArrayInit(shapePartCount, i => offsetMeans[i].ToArray());
             gridHolder.ShapePartOffsetPrecisions.ObservedValue = Util.ArrayInit(shapePartCount, i => offsetPrecisions[i].ToArray());
-            gridHolder.ShapePartPresentedPrior.ObservedValue = Util.ArrayInit(shapePartCount, i => new Bernoulli(1));
 
-            return gridHolder.Sample(count);
+            gridHolder.Sample(count, out labels, out locations, out orientations);
         }
 
         private static void LearnShapeModel(
-            PositiveDefiniteMatrix[] shapeOrientations,
+            int gridWidth,
+            int gridHeight,
+            int shapePartCount,
             bool[][,] trainingSet,
             double observationNoiseProb,
             double pottsPenalty)
         {
             int observationCount = trainingSet.Length;
-            int shapePartCount = shapeOrientations.Length;
 
-            var gridHolder = new ImageModelFactorized(GridSize, GridSize, shapePartCount, observationCount);
+            var gridHolder = new ImageModelFactorized(gridWidth, gridHeight, shapePartCount, observationCount);
             gridHolder.PottsPenalty.ObservedValue = pottsPenalty;
             gridHolder.ObservationNoiseProbability.ObservedValue = observationNoiseProb;
             gridHolder.ObservedLabels.ObservedValue = trainingSet;
-            gridHolder.ShapePartOrientation.ObservedValue = shapeOrientations;
 
             InferenceEngine engine = CreateInferenceEngine();
+            //engine.Compiler.UseSerialSchedules = true;
             engine.OptimiseForVariables = gridHolder.GetVariablesForShapeModelLearning();
 
-            // Initialize messages randomly
-            //Gaussian[][][] randomLocationInitialization = Util.ArrayInit(
-            //    observationCount, i => Util.ArrayInit(
-            //        shapePartCount,
-            //        j => Util.ArrayInit(2, k => Gaussian.FromMeanAndVariance(0.5 + 0.25 * (2 * Rand.Double() - 1), 0.5 * 0.5))));
-            //gridHolder.ShapePartLocation.InitialiseTo(Distribution<double>.Array(randomLocationInitialization));
-
-            for (int iterationCount = 10; iterationCount <= 500; iterationCount += 10)
+            for (int iterationCount = 10; iterationCount <= 1000; iterationCount += 50)
             {
                 engine.NumberOfIterations = iterationCount;
 
-                // Infer locations
-                GaussianArray3D shapePartLocationPosteriors = engine.Infer<GaussianArray3D>(gridHolder.ShapePartLocation);
-                BernoulliArray1D shapePartPresentedPosteriors = engine.Infer<BernoulliArray1D>(gridHolder.ShapePartPresented);
-                
-                // Draw part locations
+                GaussianArray3D shapePartLocations = engine.Infer<GaussianArray3D>(gridHolder.ShapePartLocation);
+                WishartArray2D shapePartOrientations = engine.Infer<WishartArray2D>(gridHolder.ShapePartOrientation);
                 for (int i = 0; i < trainingSet.Length; ++i)
                 {
-                    var shapeParams = Util.ArrayInit(
-                        shapePartCount,
-                        j => Tuple.Create(
-                            shapeOrientations[j],
-                            Vector.FromArray(shapePartLocationPosteriors[i][j][0].GetMean(), shapePartLocationPosteriors[i][j][1].GetMean())));
-                    shapeParams = shapeParams.Where((s, j) => shapePartPresentedPosteriors[j].GetProbTrue() > 0.5).ToArray();
-                    DrawShape(shapeParams).Save(string.Format("fitted_object_{0}_{1}.png", iterationCount, i));
+                    Bitmap drawnShape = DrawShape(
+                        gridWidth,
+                        gridHeight,
+                        Util.ArrayInit(
+                            shapePartCount, j => Tuple.Create(shapePartOrientations[i][j].GetMean(), Vector.FromArray(shapePartLocations[i][j][0].GetMean(), shapePartLocations[i][j][1].GetMean()))));
+                    drawnShape.Save(string.Format("fitted_object_{0}_{1}.png", iterationCount, i));
                 }
 
                 // Infer shape model
                 GaussianArray2D shapeOffsetMeanPosteriors = engine.Infer<GaussianArray2D>(gridHolder.ShapePartOffsetMeans);
                 GammaArray2D shapeOffsetPrecPosteriors = engine.Infer<GammaArray2D>(gridHolder.ShapePartOffsetPrecisions);
+                WishartArray1D shapeOrientationRatePosteriors = engine.Infer<WishartArray1D>(gridHolder.ShapePartOrientationPriorRates);
+
+                // Draw shape model
+                DrawShapeModel(gridWidth, gridHeight, shapeOffsetMeanPosteriors, shapeOrientationRatePosteriors, gridHolder.ShapePartOrientationShape.ObservedValue).Save(string.Format("shape_model_{0}.png", iterationCount));
+                for (int sampleIndex = 0; sampleIndex < 10; ++sampleIndex)
+                {
+                    double[][] shapeOffsetMeans = shapeOffsetMeanPosteriors.Sample();
+                    double[][] shapeOffsetPrecisions = shapeOffsetPrecPosteriors.Sample();
+                    double[][] shapeOffsets = Util.ArrayInit(shapePartCount, i => Util.ArrayInit(2, j => Gaussian.Sample(shapeOffsetMeans[i][j], shapeOffsetPrecisions[i][j])));
+                    PositiveDefiniteMatrix[] shapeOrientationRates = shapeOrientationRatePosteriors.Sample();
+                    PositiveDefiniteMatrix[] shapeOrientations = Util.ArrayInit(shapePartCount, i => Wishart.SampleFromShapeAndRate(gridHolder.ShapePartOrientationShape.ObservedValue, shapeOrientationRates[i]));
+                    PositiveDefiniteMatrix[] ratesToShowOrientation = Util.ArrayInit(shapePartCount, i => shapeOrientations[i].Inverse() * gridHolder.ShapePartOrientationShape.ObservedValue);
+                    DrawShapeModel(gridWidth, gridHeight, shapeOffsets, ratesToShowOrientation, gridHolder.ShapePartOrientationShape.ObservedValue).Save(string.Format("shape_model_sample_{0}.png", sampleIndex));
+                }
 
                 // Print shape model
                 for (int i = 0; i < shapePartCount; ++i)
@@ -179,10 +248,60 @@ namespace SegmentationGrid
                     Console.WriteLine("Offset mean Y: {0}", shapeOffsetMeanPosteriors[i][1]);
                     Console.WriteLine("Offset prec X: {0}", shapeOffsetPrecPosteriors[i][0]);
                     Console.WriteLine("Offset prec Y: {0}", shapeOffsetPrecPosteriors[i][1]);
-                    Console.WriteLine("Presense: {0}", shapePartPresentedPosteriors[i]);
                     Console.WriteLine();
                 }
             }
+        }
+
+        private static Tuple<PositiveDefiniteMatrix, Vector>[] FindShapesKMeans(bool[,] mask, int shapeCount, int iterations)
+        {
+            List<Vector> pointCoords = new List<Vector>();
+            for (int i = 0; i < mask.GetLength(0); ++i)
+            {
+                for (int j = 0; j < mask.GetLength(1); ++j)
+                {
+                    if (mask[i, j])
+                    {
+                        pointCoords.Add(Vector.FromArray((i + 0.5) / mask.GetLength(0), (j + 0.5) / mask.GetLength(1)));
+                    }
+                }
+            }
+
+            Rand.Shuffle(pointCoords);
+            VectorGaussian[] clusters = pointCoords.Take(shapeCount).Select(p => new VectorGaussian(p, PositiveDefiniteMatrix.Identity(2))).ToArray();
+            int[] closestClusterIndex = new int[pointCoords.Count];
+            for (int i = 0; i < iterations; ++i)
+            {
+                // Find closest cluster for each point
+                for (int j = 0; j < pointCoords.Count; ++j)
+                {
+                    for (int k = 0; k < shapeCount; ++k)
+                    {
+                        if (MathHelpers.DistanceSqr(pointCoords[j], clusters[k].GetMean()) >
+                            MathHelpers.DistanceSqr(pointCoords[j], clusters[closestClusterIndex[j]].GetMean()))
+                        {
+                            closestClusterIndex[j] = k;
+                        }
+                    }
+                }
+
+                // Recompute cluster centers
+                for (int k = 0; k < shapeCount; ++k)
+                {
+                    VectorMeanVarianceAccumulator accum = new VectorMeanVarianceAccumulator(2);
+                    foreach (Vector point in pointCoords.Where((p, j) => closestClusterIndex[j] == k))
+                    {
+                        accum.Add(point);
+                    }
+
+                    if (accum.Count > 0)
+                    {
+                        clusters[k] = VectorGaussian.FromMeanAndVariance(accum.Mean, accum.Variance);
+                    }
+                }
+            }
+
+            return clusters.Select(c => Tuple.Create(c.Precision, c.GetMean())).ToArray();
         }
 
         private static PositiveDefiniteMatrix EllipsePrecisionMatrix(
@@ -223,21 +342,114 @@ namespace SegmentationGrid
             return result;
         }
 
-        private static Bitmap DrawShape(Tuple<PositiveDefiniteMatrix, Vector>[] shapeParams)
+        private static Bitmap DrawShapeModel(int gridWidth, int gridHeight, GaussianArray2D shapePartLocationOffsetMeans, WishartArray1D shapePartOrientationRates, double shapePartOrientationShape)
+        {
+            return DrawShapeModel(
+                gridWidth,
+                gridHeight,
+                Util.ArrayInit(shapePartLocationOffsetMeans.Count, i => Vector.FromArray(shapePartLocationOffsetMeans[i][0].GetMean(), shapePartLocationOffsetMeans[i][1].GetMean())),
+                Util.ArrayInit(shapePartOrientationRates.Count, i => shapePartOrientationRates[i].GetMean()),
+                shapePartOrientationShape);
+        }
+
+        private static Bitmap DrawShapeModel(int gridWidth, int gridHeight, double[][] shapePartLocationOffsetMeans, PositiveDefiniteMatrix[] shapePartOrientationRates, double shapePartOrientationShape)
+        {
+            return DrawShapeModel(
+                gridWidth,
+                gridHeight,
+                Util.ArrayInit(shapePartLocationOffsetMeans.Length, i => Vector.FromArray(shapePartLocationOffsetMeans[i][0], shapePartLocationOffsetMeans[i][1])),
+                shapePartOrientationRates,
+                shapePartOrientationShape);
+        }
+        
+        private static Bitmap DrawShapeModel(int gridWidth, int gridHeight, Vector[] shapePartLocationOffsetMeans, PositiveDefiniteMatrix[] shapePartOrientationRates, double shapePartOrientationShape)
+        {
+            Bitmap result = new Bitmap(gridWidth, gridHeight);
+            using (Graphics graphics = Graphics.FromImage(result))
+            {
+                graphics.Clear(Color.Black);
+                
+                Vector centerPos = Vector.FromArray(0.5, 0.5);    
+                for (int i = 0; i < shapePartLocationOffsetMeans.Length; ++i)
+                {
+                    Vector shapePartPos = centerPos + shapePartLocationOffsetMeans[i];
+                    graphics.DrawLine(Pens.Green, gridWidth * (float)centerPos[0], gridHeight * (float)centerPos[1], gridWidth * (float)shapePartPos[0], gridHeight * (float)shapePartPos[1]);
+                    DrawShapeEllipse(gridWidth, gridHeight, graphics, Pens.Red, shapePartPos, shapePartOrientationRates[i].Inverse() * shapePartOrientationShape);
+                }
+            }
+
+            return result;
+        }
+
+        private static void DrawShapeEllipse(int gridWidth, int gridHeight, Graphics graphics, Pen pen, Vector pos, PositiveDefiniteMatrix ellipsePrecisionMatrix)
+        {
+            PositiveDefiniteMatrix inverse = ellipsePrecisionMatrix.Inverse();
+            LowerTriangularMatrix cholesky = new LowerTriangularMatrix(2, 2);
+            cholesky.SetToCholesky(inverse);
+
+            const int points = 20;
+            Vector prevPoint = null;
+            double width = 2 * Math.Log(2);
+            for (int i = 0; i <= points; ++i)
+            {
+                double angle = Math.PI * 2 * i / points;
+                Vector point = pos + cholesky * Vector.FromArray(Math.Cos(angle), Math.Sin(angle)) * width;
+                if (prevPoint != null)
+                {
+                    graphics.DrawLine(pen, gridWidth * (float) prevPoint[0], gridHeight * (float) prevPoint[1], gridWidth * (float) point[0], gridHeight * (float) point[1]);
+                }
+
+                prevPoint = point;
+            }
+        }
+        
+        private static Bitmap DrawShape(int gridWidth, int gridHeight, IEnumerable<ShapePart> shapeParts)
         {
             double[,] mask = Util.ArrayInit(
-                GridSize,
-                GridSize,
+                gridWidth,
+                gridHeight,
                 (x, y) =>
                 {
                     double prob = 1.0;
-                    for (int i = 0; i < shapeParams.Length; ++i)
+                    foreach (ShapePart part in shapeParts)
                     {
-                        Bernoulli partLabelDistr = LabelFromShapeFactorizedOps.LabelAverageConditional(
-                            Vector.FromArray((x + 0.5) / GridSize, (y + 0.5) / GridSize),
-                            shapeParams[i].Item2[0],
-                            shapeParams[i].Item2[1],
-                            shapeParams[i].Item1);
+                        Bernoulli partLabelDistr = LabelFromShapeFullCovarianceOps.LabelAverageConditional(
+                            Vector.FromArray((x + 0.5) / gridWidth, (y + 0.5) / gridHeight), part);
+                        prob *= (1 - partLabelDistr.GetProbTrue());
+                    }
+
+                    return 1 - prob;
+                });
+
+            Bitmap result = ImageHelpers.ArrayToBitmap(mask, p => PenaltyToColor(p, 0, 1));
+
+            using (Graphics graphics = Graphics.FromImage(result))
+            {
+                int index = 1;
+                foreach (ShapePart shapePart in shapeParts)
+                {
+                    Color color = Color.FromArgb(255 * (index & 1), 255 * ((index >> 1) & 1), 255 * ((index >> 2) & 1));
+                    Pen pen = new Pen(color);
+                    DrawShapeEllipse(gridWidth, gridHeight, graphics, pen, shapePart.Item2, shapePart.Item1);
+                    ++index;
+                }
+            }
+
+            return result;
+        }
+
+        private static Bitmap DrawShape(int gridWidth, int gridHeight, IEnumerable<VectorGaussianWishart> shapePartDists)
+        {
+            double[,] mask = Util.ArrayInit(
+                gridWidth,
+                gridHeight,
+                (x, y) =>
+                {
+                    double prob = 1.0;
+                    foreach (VectorGaussianWishart part in shapePartDists)
+                    {
+                        Bernoulli partLabelDistr = LabelFromShapeFullCovarianceOps.LabelAverageConditional(
+                            Vector.FromArray((x + 0.5) / gridWidth, (y + 0.5) / gridHeight), part);
                         prob *= (1 - partLabelDistr.GetProbTrue());
                     }
 
@@ -246,6 +458,11 @@ namespace SegmentationGrid
 
             Bitmap result = ImageHelpers.ArrayToBitmap(mask, p => PenaltyToColor(p, 0, 1));
             return result;
+        }
+
+        private static Bitmap DrawShape(int gridWidth, int gridHeight, VectorGaussianWishart shapePartDist)
+        {
+            return DrawShape(gridWidth, gridHeight, new[] { shapePartDist });
         }
 
         private static InferenceEngine CreateInferenceEngine()
@@ -259,7 +476,7 @@ namespace SegmentationGrid
             engine.Compiler.GenerateInMemory = false;
             engine.Compiler.WriteSourceFiles = true;
             engine.Compiler.IncludeDebugInformation = true;
-            //engine.Compiler.UseSerialSchedules = true;
+            engine.Compiler.UseSerialSchedules = true;
             return engine;
         }
 

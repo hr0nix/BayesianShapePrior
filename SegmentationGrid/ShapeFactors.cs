@@ -36,6 +36,120 @@ namespace SegmentationGrid
             Bernoulli distr = LabelFromShapeFactorizedOps.LabelAverageConditional(point, shapeX, shapeY, shapeOrientation);
             return Rand.Double() < distr.GetProbTrue();
         }
+
+        [ParameterNames("Combination", "Position", "Orientation")]
+        public static Tuple<PositiveDefiniteMatrix, Vector> Combine(Vector position, PositiveDefiniteMatrix orientation)
+        {
+            return Tuple.Create(orientation, position);
+        }
+
+        [ParameterNames("Combination", "PositionX", "PositionY", "Orientation")]
+        public static Tuple<PositiveDefiniteMatrix, Vector> Combine(double positionX, double positionY, PositiveDefiniteMatrix orientation)
+        {
+            return Tuple.Create(orientation, Vector.FromArray(positionX, positionY));
+        }
+    }
+
+    // This not really an EP op!
+    [FactorMethod(typeof(ShapeFactors), "Combine", typeof(Vector), typeof(PositiveDefiniteMatrix))]
+    public static class CombineOps
+    {
+        public static VectorGaussianWishart CombinationAverageConditional(
+            VectorGaussian position, Wishart orientation, VectorGaussianWishart combination, VectorGaussianWishart result)
+        {            
+            return Combine(position, orientation, result);
+        }
+
+        public static VectorGaussian PositionAverageConditional(
+            VectorGaussian position, Wishart orientation, [SkipIfUniform] VectorGaussianWishart combination, VectorGaussian result)
+        {
+            return ExtractVectorPart(combination, result);
+        }
+
+        public static Wishart OrientationAverageConditional(
+            VectorGaussian position, Wishart orientation, [SkipIfUniform] VectorGaussianWishart combination, Wishart result)
+        {
+            return ExtractMatrixPart(combination, result);
+        }
+
+        public static VectorGaussian ExtractVectorPart(VectorGaussianWishart gaussianWishart, VectorGaussian result)
+        {
+            if (gaussianWishart.IsVectorMarginalUniform())
+            {
+                return VectorGaussian.Uniform(2);
+            }
+
+            double firstShape, secondPrecisionScale;
+            PositiveDefiniteMatrix firstRate;
+            Vector secondLocation;
+            gaussianWishart.ExtractParameters(out firstShape, out firstRate, out secondLocation, out secondPrecisionScale);
+
+            result.SetMeanAndPrecision(secondLocation, MathHelpers.Invert(firstRate) * (firstShape * secondPrecisionScale));
+
+            return result;
+        }
+
+        public static Wishart ExtractMatrixPart(VectorGaussianWishart gaussianWishart, Wishart result)
+        {
+            result.SetTo(gaussianWishart.GetMatrixMarginal());
+            return result;
+        }
+
+        public static VectorGaussianWishart Combine(VectorGaussian position, Wishart orientation, VectorGaussianWishart result)
+        {
+            if (orientation.IsUniform())
+            {
+                result.SetToUniform();
+            }
+            else if (position.IsUniform())
+            {
+                result.SetTo(orientation.Shape, orientation.Rate, Vector.Zero(2), 0);
+            }
+            else
+            {
+                PositiveDefiniteMatrix rateTimesPrecision = new PositiveDefiniteMatrix(2, 2);
+                rateTimesPrecision.SetToProduct(orientation.Rate, position.Precision);
+                double trace = MathHelpers.Invert(rateTimesPrecision).Trace();
+                Vector positionMean = position.MeanTimesPrecision * MathHelpers.Invert(position.Precision);
+                result.SetTo(orientation.Shape, orientation.Rate, positionMean, orientation.Dimension / (orientation.Shape * trace));
+            }
+
+            return result;
+        }
+    }
+
+    // This not really an EP op!
+    [FactorMethod(typeof(ShapeFactors), "Combine", typeof(double), typeof(double), typeof(PositiveDefiniteMatrix))]
+    public static class CombineFactorizedPositionOps
+    {
+        public static VectorGaussianWishart CombinationAverageConditional(
+            [Proper] Gaussian positionX, [Proper] Gaussian positionY, [Proper] Wishart orientation, VectorGaussianWishart combination, VectorGaussianWishart result)
+        {
+            VectorGaussian position = VectorGaussian.FromMeanAndPrecision(
+                Vector.FromArray(positionX.GetMean(), positionY.GetMean()),
+                new PositiveDefiniteMatrix(new[,] { { positionX.Precision, 0 }, { 0, positionY.Precision } }));
+            return CombineOps.Combine(position, orientation, result);
+        }
+
+        public static Gaussian PositionXAverageConditional(
+            Gaussian positionX, Gaussian positionY, Wishart orientation, [Proper] VectorGaussianWishart combination)
+        {
+            VectorGaussian position = new VectorGaussian(2);
+            return MathHelpers.GetMarginal(CombineOps.ExtractVectorPart(combination, position), 0);
+        }
+
+        public static Gaussian PositionYAverageConditional(
+            Gaussian positionX, Gaussian positionY, Wishart orientation, [Proper] VectorGaussianWishart combination)
+        {
+            VectorGaussian position = new VectorGaussian(2);
+            return MathHelpers.GetMarginal(CombineOps.ExtractVectorPart(combination, position), 1);
+        }
+
+        public static Wishart OrientationAverageConditional(
+            Gaussian positionX, Gaussian positionY, Wishart orientation, [Proper] VectorGaussianWishart combination, Wishart result)
+        {
+            return CombineOps.ExtractMatrixPart(combination, result);
+        }
     }
 
     [FactorMethod(typeof(ShapeFactors), "LabelFromShape", typeof(Vector), typeof(Tuple<double, double>), typeof(Tuple<double, double>))]
@@ -162,7 +276,7 @@ namespace SegmentationGrid
     {
         #region EP and Gibbs
 
-        public static Bernoulli LabelAverageConditional(Vector point, VectorGaussianWishart shapeParams)
+        public static Bernoulli LabelAverageConditional(Vector point, [Proper] VectorGaussianWishart shapeParams)
         {
             VectorGaussianWishart shapeParamsTimesFactor = DistributionTimesFactor(point, shapeParams);
             return new Bernoulli(Math.Exp(shapeParamsTimesFactor.GetLogNormalizer() - shapeParams.GetLogNormalizer()));
@@ -174,7 +288,7 @@ namespace SegmentationGrid
         }
 
         public static VectorGaussianWishart ShapeParamsAverageConditional(
-            Vector point, Bernoulli label, VectorGaussianWishart shapeParams, VectorGaussianWishart result)
+            Vector point, Bernoulli label, [Proper] VectorGaussianWishart shapeParams, VectorGaussianWishart result)
         {
             VectorGaussianWishart shapeParamsTimesFactor = DistributionTimesFactor(point, shapeParams);
 
@@ -198,7 +312,7 @@ namespace SegmentationGrid
 
         private static VectorGaussianWishart DistributionTimesFactor(Vector point, VectorGaussianWishart shapeParamsDistr)
         {
-            var factorAsDistr = VectorGaussianWishart.FromNaturalParameters(0, point.Outer(point) * (-0.5), point, -0.5);
+            var factorAsDistr = VectorGaussianWishart.FromNaturalParameters(0, new PositiveDefiniteMatrix(point.Outer(point) * (-0.5)), point, -0.5);
             VectorGaussianWishart result = new VectorGaussianWishart(2);
             result.SetToProduct(factorAsDistr, shapeParamsDistr);
             return result;
@@ -230,16 +344,34 @@ namespace SegmentationGrid
         {
             return LogAverageFactor(label, point, shapeX, shapeY, shapeOrientation) - label.GetLogAverageOf(to_label);
         }
-        
+
         #endregion
 
         #region EP and Gibbs
 
         public static Bernoulli LabelAverageConditional(
-            Vector point, Gaussian shapeX, Gaussian shapeY, PositiveDefiniteMatrix shapeOrientation)
+            Vector point, Gaussian shapeX, Gaussian shapeY, Wishart shapeOrientation)
         {
-            VectorGaussian shapeLocationTimesFactor = ShapeLocationTimesFactor(point, shapeX, shapeY, shapeOrientation);
-            return new Bernoulli(Math.Exp(shapeLocationTimesFactor.GetLogNormalizer() - shapeX.GetLogNormalizer() - shapeY.GetLogNormalizer() - 0.5 * shapeOrientation.QuadraticForm(point)));
+            if (shapeOrientation.IsPointMass)
+            {
+                if (shapeX.IsPointMass && shapeY.IsPointMass)
+                {
+                    return LabelAverageConditional(point, shapeX.Point, shapeY.Point, shapeOrientation.Point);
+                }
+                else if (!shapeX.IsPointMass && !shapeY.IsPointMass)
+                {
+                    VectorGaussian shapeLocationTimesFactor = ShapeLocationTimesFactor(point, shapeX, shapeY, shapeOrientation.Point);
+                    return new Bernoulli(Math.Exp(shapeLocationTimesFactor.GetLogNormalizer() - shapeX.GetLogNormalizer() - shapeY.GetLogNormalizer() - 0.5 * shapeOrientation.Point.QuadraticForm(point)));
+                }
+                else
+                {
+                    throw new NotSupportedException();
+                }
+            }
+            else
+            {
+                throw new NotSupportedException();
+            }
         }
 
         public static Bernoulli LabelAverageConditional(
@@ -250,15 +382,49 @@ namespace SegmentationGrid
         }
 
         public static Gaussian ShapeXAverageConditional(
-            Vector point, Bernoulli label, Gaussian shapeX, Gaussian shapeY, PositiveDefiniteMatrix shapeOrientation)
+            Vector point, Bernoulli label, Gaussian shapeX, Gaussian shapeY, Wishart shapeOrientation)
         {
-            return ShapeAverageConditional(point, label, shapeX, shapeY, shapeOrientation, true);
+            return ShapeAverageConditional(point, label, shapeX, shapeY, shapeOrientation.Point, true);
         }
 
         public static Gaussian ShapeYAverageConditional(
-            Vector point, Bernoulli label, Gaussian shapeX, Gaussian shapeY, PositiveDefiniteMatrix shapeOrientation)
+            Vector point, Bernoulli label, Gaussian shapeX, Gaussian shapeY, Wishart shapeOrientation)
         {
-            return ShapeAverageConditional(point, label, shapeX, shapeY, shapeOrientation, false);
+            return ShapeAverageConditional(point, label, shapeX, shapeY, shapeOrientation.Point, false);
+        }
+
+        public static Wishart ShapeOrientationAverageConditional(
+            Vector point, Bernoulli label, Gaussian shapeX, Gaussian shapeY, Wishart shapeOrientation, Wishart result)
+        {
+            if (shapeOrientation.IsPointMass && shapeX.IsPointMass && shapeY.IsPointMass)
+            {
+                double labelProbTrue = label.GetProbTrue();
+                double labelProbFalse = 1.0 - labelProbTrue;
+                double probDiff = labelProbTrue - labelProbFalse;
+
+                Vector shapeLocation = Vector.FromArray(shapeX.Point, shapeY.Point);
+                Vector diff = shapeLocation - point;
+                Matrix diffOuter = diff.Outer(diff);
+                Matrix orientationTimesDiffOuter = shapeOrientation.Point * diffOuter;
+                double trace = orientationTimesDiffOuter.Trace();
+
+                double factorValue = Math.Exp(-0.5 * shapeOrientation.Point.QuadraticForm(diff));
+                double funcValue = factorValue * probDiff + labelProbFalse;
+
+                PositiveDefiniteMatrix dLogFunc = new PositiveDefiniteMatrix(diffOuter * (-0.5 * probDiff * factorValue / funcValue));
+                double xxddLogFunc =
+                    -0.5 * probDiff * (-0.5 * labelProbFalse * factorValue * trace * trace / (funcValue * funcValue) + factorValue * trace / funcValue);
+                
+                LowerTriangularMatrix cholesky = new LowerTriangularMatrix(2, 2);
+                cholesky.SetToCholesky(shapeOrientation.Point);
+                PositiveDefiniteMatrix inverse = shapeOrientation.Point.Inverse();
+                result.SetDerivatives(cholesky, inverse, dLogFunc, xxddLogFunc, forceProper: true);
+                return result;
+            }
+            else
+            {
+                throw new NotSupportedException();
+            }
         }
 
         #endregion
@@ -268,25 +434,57 @@ namespace SegmentationGrid
         private static Gaussian ShapeAverageConditional(
             Vector point, Bernoulli label, Gaussian shapeX, Gaussian shapeY, PositiveDefiniteMatrix shapeOrientation, bool resultForXCoord)
         {
-            VectorGaussian shapeLocationTimesFactor = ShapeLocationTimesFactor(point, shapeX, shapeY, shapeOrientation);
-            double labelProbFalse = label.GetProbFalse();
-            double shapeLocationWeight = labelProbFalse;
-            double shapeLocationTimesFactorWeight =
-                Math.Exp(shapeLocationTimesFactor.GetLogNormalizer() - shapeX.GetLogNormalizer() - shapeY.GetLogNormalizer() - 0.5 * shapeOrientation.QuadraticForm(point)) *
-                (1 - 2 * labelProbFalse);
+            if (shapeX.IsPointMass && shapeY.IsPointMass)
+            {
+                double labelProbTrue = label.GetProbTrue();
+                double labelProbFalse = 1.0 - labelProbTrue;
+                double probDiff = labelProbTrue - labelProbFalse;
 
-            var projectionOfSum = new Gaussian();
-            projectionOfSum.SetToSum(
-                shapeLocationWeight,
-                resultForXCoord ? shapeX : shapeY,
-                shapeLocationTimesFactorWeight,
-                shapeLocationTimesFactor.GetMarginal(resultForXCoord ? 0 : 1));
-            Gaussian result = new Gaussian();
-            result.SetToRatio(projectionOfSum, resultForXCoord ? shapeX : shapeY);
+                Vector shapeLocation = Vector.FromArray(shapeX.Point, shapeY.Point);
+                Vector diff = point - shapeLocation;
+                Vector orientationTimesDiff = shapeOrientation * diff;
+                Matrix orientationTimesDiffOuter = orientationTimesDiff.Outer(orientationTimesDiff);
 
-            return result;
+                double factorValue = Math.Exp(-0.5 * shapeOrientation.QuadraticForm(diff));
+                double funcValue = factorValue * probDiff + labelProbFalse;
+                
+                Vector dFunc = probDiff * factorValue * orientationTimesDiff;
+                Vector dLogFunc = 1.0 / funcValue * dFunc;
+                Matrix ddLogFunc =
+                    ((orientationTimesDiffOuter + shapeOrientation) * factorValue * funcValue - orientationTimesDiffOuter * probDiff * factorValue * factorValue)
+                    * (probDiff / (funcValue * funcValue));
+
+                double x = resultForXCoord ? shapeX.Point : shapeY.Point;
+                double d = resultForXCoord ? dLogFunc[0] : dLogFunc[1];
+                double dd = resultForXCoord ? ddLogFunc[0, 0] : ddLogFunc[1, 1];
+                return Gaussian.FromDerivatives(x, d, dd, forceProper: true);
+            }
+            else if (!shapeX.IsPointMass && !shapeY.IsPointMass)
+            {
+                VectorGaussian shapeLocationTimesFactor = ShapeLocationTimesFactor(point, shapeX, shapeY, shapeOrientation);
+                double labelProbFalse = label.GetProbFalse();
+                double shapeLocationWeight = labelProbFalse;
+                double shapeLocationTimesFactorWeight =
+                    Math.Exp(shapeLocationTimesFactor.GetLogNormalizer() - shapeX.GetLogNormalizer() - shapeY.GetLogNormalizer() - 0.5 * shapeOrientation.QuadraticForm(point)) *
+                    (1 - 2 * labelProbFalse);
+
+                var projectionOfSum = new Gaussian();
+                projectionOfSum.SetToSum(
+                    shapeLocationWeight,
+                    resultForXCoord ? shapeX : shapeY,
+                    shapeLocationTimesFactorWeight,
+                    shapeLocationTimesFactor.GetMarginal(resultForXCoord ? 0 : 1));
+                Gaussian result = new Gaussian();
+                result.SetToRatio(projectionOfSum, resultForXCoord ? shapeX : shapeY);
+
+                return result;
+            }
+            else
+            {
+                throw new NotSupportedException();
+            }
         }
-        
+
         private static VectorGaussian ShapeLocationTimesFactor(
             Vector point, Gaussian shapeX, Gaussian shapeY, PositiveDefiniteMatrix shapeOrientation)
         {

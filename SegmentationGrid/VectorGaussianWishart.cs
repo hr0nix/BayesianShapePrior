@@ -6,6 +6,7 @@ using System.Diagnostics;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
+using MicrosoftResearch.Infer.Utils;
 
 namespace SegmentationGrid
 {
@@ -23,14 +24,6 @@ namespace SegmentationGrid
         Sampleable<Tuple<PositiveDefiniteMatrix, Vector>>,
         CanGetLogNormalizer
     {
-        private double logDetMatrixCoeff;
-
-        private PositiveDefiniteMatrix matrixCoeff;
-
-        private Vector vectorTimesMatrixCoeff;
-
-        private double vectorTimesMatrixTimesVectorCoeff;
-
         public VectorGaussianWishart(
             double firstShape, PositiveDefiniteMatrix firstRate, Vector secondLocation, double secondPrecisionScale)
             : this(secondLocation.Count)
@@ -40,15 +33,23 @@ namespace SegmentationGrid
 
         public VectorGaussianWishart(int dimensions)
         {
-            this.logDetMatrixCoeff = 0;
-            this.matrixCoeff = new PositiveDefiniteMatrix(dimensions, dimensions);
-            this.vectorTimesMatrixCoeff = Vector.Zero(dimensions);
-            this.vectorTimesMatrixTimesVectorCoeff = 0;
+            this.LogDetMatrixCoeff = 0;
+            this.MatrixCoeff = new PositiveDefiniteMatrix(dimensions, dimensions);
+            this.VectorTimesMatrixCoeff = Vector.Zero(dimensions);
+            this.VectorTimesMatrixTimesVectorCoeff = 0;
         }
+
+        public double LogDetMatrixCoeff { get; private set; }
+
+        public PositiveDefiniteMatrix MatrixCoeff { get; private set; }
+
+        public Vector VectorTimesMatrixCoeff { get; private set; }
+
+        public double VectorTimesMatrixTimesVectorCoeff { get; private set; }
 
         public int Dimension
         {
-            get { return this.vectorTimesMatrixCoeff.Count; }
+            get { return this.VectorTimesMatrixCoeff.Count; }
         }
         
         public bool IsPointMass
@@ -62,7 +63,7 @@ namespace SegmentationGrid
         {
             if (this.IsPointMass) throw new NotImplementedException();
 
-            VectorGaussianWishart result = new VectorGaussianWishart(this.Dimension);
+            var result = new VectorGaussianWishart(this.Dimension);
             result.SetTo(this);
             return result;
         }
@@ -72,18 +73,49 @@ namespace SegmentationGrid
             throw new NotImplementedException();
         }
 
+        [Construction("LogDetMatrixCoeff", "MatrixCoeff", "VectorTimesMatrixCoeff", "VectorTimesMatrixTimesVectorCoeff")]
         public static VectorGaussianWishart FromNaturalParameters(
             double logDetMatrixCoeff, PositiveDefiniteMatrix matrixCoeff, Vector vectorTimesMatrixCoeff, double vectorTimesMatrixTimesVectorCoeff)
         {
-            VectorGaussianWishart result = new VectorGaussianWishart(vectorTimesMatrixCoeff.Count);
+            var result = new VectorGaussianWishart(vectorTimesMatrixCoeff.Count);
             
-            result.logDetMatrixCoeff = logDetMatrixCoeff;
-            result.matrixCoeff.SetTo(matrixCoeff);
-            result.vectorTimesMatrixCoeff.SetTo(vectorTimesMatrixCoeff);
-            result.vectorTimesMatrixTimesVectorCoeff = vectorTimesMatrixTimesVectorCoeff;
+            result.LogDetMatrixCoeff = logDetMatrixCoeff;
+            result.MatrixCoeff.SetTo(matrixCoeff);
+            result.VectorTimesMatrixCoeff.SetTo(vectorTimesMatrixCoeff);
+            result.VectorTimesMatrixTimesVectorCoeff = vectorTimesMatrixTimesVectorCoeff;
 
             return result;
         }
+
+        public Wishart GetMatrixMarginal()
+        {
+            double firstShape, secondPrecisionScale;
+            PositiveDefiniteMatrix firstRate;
+            Vector secondLocation;
+            ExtractParameters(out firstShape, out firstRate, out secondLocation, out secondPrecisionScale);
+
+            return Wishart.FromShapeAndRate(firstShape, firstRate);
+        }
+
+        //public VectorGaussian GetVectorMarginalProj()
+        //{
+        //    // TODO: math needs checking
+
+        //    if (this.IsVectorMarginalUniform())
+        //    {
+        //        return VectorGaussian.Uniform(2);
+        //    }
+            
+        //    double firstShape, secondPrecisionScale;
+        //    PositiveDefiniteMatrix firstRate;
+        //    Vector secondLocation;
+        //    ExtractParameters(out firstShape, out firstRate, out secondLocation, out secondPrecisionScale);
+
+        //    PositiveDefiniteMatrix variance = (PositiveDefiniteMatrix)firstRate.Clone();
+        //    variance.Scale(1.0 / ((firstShape - this.Dimension) * secondPrecisionScale));
+
+        //    return VectorGaussian.FromMeanAndVariance(secondLocation, variance);
+        //}
 
         public bool IsProper()
         {
@@ -105,20 +137,44 @@ namespace SegmentationGrid
             if (this.IsPointMass) throw new NotImplementedException();
 
             return
-                this.logDetMatrixCoeff == 0 &&
-                this.matrixCoeff.EqualsAll(0) &&
-                this.vectorTimesMatrixCoeff.EqualsAll(0) &&
-                this.vectorTimesMatrixTimesVectorCoeff == 0;
+                this.LogDetMatrixCoeff == 0 &&
+                this.MatrixCoeff.EqualsAll(0) &&
+                this.VectorTimesMatrixCoeff.EqualsAll(0) &&
+                this.VectorTimesMatrixTimesVectorCoeff == 0;
+        }
+
+        public bool IsMatrixMarginalUniform()
+        {
+            if (this.IsPointMass) throw new NotImplementedException();
+
+            double firstShape, secondPrecisionScale;
+            PositiveDefiniteMatrix firstRate;
+            Vector secondLocation;
+            ExtractParameters(out firstShape, out firstRate, out secondLocation, out secondPrecisionScale);
+
+            return firstShape == 0.0 && firstRate.EqualsAll(0.0);
+        }
+
+        public bool IsVectorMarginalUniform()
+        {
+            if (this.IsPointMass) throw new NotImplementedException();
+
+            double firstShape, secondPrecisionScale;
+            PositiveDefiniteMatrix firstRate;
+            Vector secondLocation;
+            ExtractParameters(out firstShape, out firstRate, out secondLocation, out secondPrecisionScale);
+
+            return (firstShape == 0.0 && firstRate.EqualsAll(0.0)) || secondPrecisionScale == 0.0;
         }
 
         public void SetToUniform()
         {
             if (this.IsPointMass) throw new NotImplementedException();
 
-            this.logDetMatrixCoeff = 0;
-            this.matrixCoeff.SetAllElementsTo(0);
-            this.vectorTimesMatrixCoeff.SetAllElementsTo(0);
-            this.vectorTimesMatrixTimesVectorCoeff = 0;
+            this.LogDetMatrixCoeff = 0;
+            this.MatrixCoeff.SetAllElementsTo(0);
+            this.VectorTimesMatrixCoeff.SetAllElementsTo(0);
+            this.VectorTimesMatrixTimesVectorCoeff = 0;
         }
 
         public Tuple<PositiveDefiniteMatrix, Vector> GetMean()
@@ -144,10 +200,10 @@ namespace SegmentationGrid
             this.ExtractNaturalStatistics(value, out logDetMatrix, out matrix, out vectorTimesMatrix, out vectorTimesMatrixTimesVector);
             
             return
-                logDetMatrix * this.logDetMatrixCoeff +
-                Matrix.TraceOfProduct(matrix, this.matrixCoeff) +
-                vectorTimesMatrix.Inner(this.vectorTimesMatrixCoeff) +
-                vectorTimesMatrixTimesVector * this.vectorTimesMatrixTimesVectorCoeff -
+                logDetMatrix * this.LogDetMatrixCoeff +
+                Matrix.TraceOfProduct(matrix, this.MatrixCoeff) +
+                vectorTimesMatrix.Inner(this.VectorTimesMatrixCoeff) +
+                vectorTimesMatrixTimesVector * this.VectorTimesMatrixTimesVectorCoeff -
                 this.GetLogNormalizer();
         }
 
@@ -157,10 +213,10 @@ namespace SegmentationGrid
             
             if (this.IsPointMass) throw new NotImplementedException();
 
-            this.logDetMatrixCoeff = firstShape - this.Dimension * 0.5;
-            this.matrixCoeff.SetTo(-firstRate - secondLocation.Outer(secondLocation) * 0.5 * secondPrecisionScale);
-            this.vectorTimesMatrixCoeff.SetTo(secondLocation * secondPrecisionScale);
-            this.vectorTimesMatrixTimesVectorCoeff = -secondPrecisionScale * 0.5;
+            this.LogDetMatrixCoeff = firstShape - this.Dimension * 0.5;
+            this.MatrixCoeff.SetTo(-firstRate - secondLocation.Outer(secondLocation) * 0.5 * secondPrecisionScale);
+            this.VectorTimesMatrixCoeff.SetTo(secondLocation * secondPrecisionScale);
+            this.VectorTimesMatrixTimesVectorCoeff = -secondPrecisionScale * 0.5;
         }
 
         public void SetTo(VectorGaussianWishart value)
@@ -169,10 +225,10 @@ namespace SegmentationGrid
             
             if (this.IsPointMass || value.IsPointMass) throw new NotImplementedException();
 
-            this.logDetMatrixCoeff = value.logDetMatrixCoeff;
-            this.matrixCoeff.SetTo(value.matrixCoeff);
-            this.vectorTimesMatrixCoeff.SetTo(value.vectorTimesMatrixCoeff);
-            this.vectorTimesMatrixTimesVectorCoeff = value.vectorTimesMatrixTimesVectorCoeff;
+            this.LogDetMatrixCoeff = value.LogDetMatrixCoeff;
+            this.MatrixCoeff.SetTo(value.MatrixCoeff);
+            this.VectorTimesMatrixCoeff.SetTo(value.VectorTimesMatrixCoeff);
+            this.VectorTimesMatrixTimesVectorCoeff = value.VectorTimesMatrixTimesVectorCoeff;
         }
 
         public void SetToSum(double weight1, VectorGaussianWishart value1, double weight2, VectorGaussianWishart value2)
@@ -209,20 +265,20 @@ namespace SegmentationGrid
         {
             if (this.IsPointMass || a.IsPointMass || b.IsPointMass) throw new NotImplementedException();
 
-            this.logDetMatrixCoeff = a.logDetMatrixCoeff + b.logDetMatrixCoeff;
-            this.matrixCoeff.SetToSum(a.matrixCoeff, b.matrixCoeff);
-            this.vectorTimesMatrixCoeff.SetToSum(a.vectorTimesMatrixCoeff, b.vectorTimesMatrixCoeff);
-            this.vectorTimesMatrixTimesVectorCoeff = a.vectorTimesMatrixTimesVectorCoeff + b.vectorTimesMatrixTimesVectorCoeff;
+            this.LogDetMatrixCoeff = a.LogDetMatrixCoeff + b.LogDetMatrixCoeff;
+            this.MatrixCoeff.SetToSum(a.MatrixCoeff, b.MatrixCoeff);
+            this.VectorTimesMatrixCoeff.SetToSum(a.VectorTimesMatrixCoeff, b.VectorTimesMatrixCoeff);
+            this.VectorTimesMatrixTimesVectorCoeff = a.VectorTimesMatrixTimesVectorCoeff + b.VectorTimesMatrixTimesVectorCoeff;
         }
 
         public void SetToRatio(VectorGaussianWishart numerator, VectorGaussianWishart denominator, bool forceProper = false)
         {
             if (this.IsPointMass || numerator.IsPointMass || denominator.IsPointMass || forceProper) throw new NotImplementedException();
 
-            this.logDetMatrixCoeff = numerator.logDetMatrixCoeff - denominator.logDetMatrixCoeff;
-            this.matrixCoeff.SetToDifference(numerator.matrixCoeff, denominator.matrixCoeff);
-            this.vectorTimesMatrixCoeff.SetToDifference(numerator.vectorTimesMatrixCoeff, denominator.vectorTimesMatrixCoeff);
-            this.vectorTimesMatrixTimesVectorCoeff = numerator.vectorTimesMatrixTimesVectorCoeff - denominator.vectorTimesMatrixTimesVectorCoeff;
+            this.LogDetMatrixCoeff = numerator.LogDetMatrixCoeff - denominator.LogDetMatrixCoeff;
+            this.MatrixCoeff.SetToDifference(numerator.MatrixCoeff, denominator.MatrixCoeff);
+            this.VectorTimesMatrixCoeff.SetToDifference(numerator.VectorTimesMatrixCoeff, denominator.VectorTimesMatrixCoeff);
+            this.VectorTimesMatrixTimesVectorCoeff = numerator.VectorTimesMatrixTimesVectorCoeff - denominator.VectorTimesMatrixTimesVectorCoeff;
         }
 
         public void SetToPower(VectorGaussianWishart value, double exponent)
@@ -230,10 +286,10 @@ namespace SegmentationGrid
             if (this.IsPointMass || value.IsPointMass) throw new NotImplementedException();
 
             this.SetTo(value);
-            this.logDetMatrixCoeff *= exponent;
-            this.matrixCoeff *= exponent;
-            this.vectorTimesMatrixCoeff *= exponent;
-            this.vectorTimesMatrixTimesVectorCoeff *= exponent;
+            this.LogDetMatrixCoeff *= exponent;
+            this.MatrixCoeff *= exponent;
+            this.VectorTimesMatrixCoeff *= exponent;
+            this.VectorTimesMatrixTimesVectorCoeff *= exponent;
         }
 
         public double GetLogAverageOf(VectorGaussianWishart that)
@@ -280,16 +336,27 @@ namespace SegmentationGrid
             throw new NotImplementedException();
         }
 
-        private void ExtractParameters(
+        public void ExtractParameters(
             out double firstShape, out PositiveDefiniteMatrix firstRate, out Vector secondLocation, out double secondPrecisionScale)
         {
             if (this.IsPointMass) throw new NotImplementedException();
 
-            firstShape = this.logDetMatrixCoeff + this.Dimension * 0.5;
-            secondPrecisionScale = -2 * this.vectorTimesMatrixTimesVectorCoeff;
-            secondLocation = 1.0 / secondPrecisionScale * this.vectorTimesMatrixCoeff;
+            firstShape = this.LogDetMatrixCoeff + this.Dimension * 0.5;
+            secondPrecisionScale = -2 * this.VectorTimesMatrixTimesVectorCoeff;
+            secondLocation = 1.0 / secondPrecisionScale * this.VectorTimesMatrixCoeff;
             firstRate = new PositiveDefiniteMatrix(this.Dimension, this.Dimension);
-            firstRate.SetTo(-this.matrixCoeff - this.vectorTimesMatrixCoeff.Outer(secondLocation) * 0.5);
+            firstRate.SetTo(-this.MatrixCoeff - this.VectorTimesMatrixCoeff.Outer(secondLocation) * 0.5);
+        }
+
+        public override string ToString()
+        {
+            double firstShape, secondPrecisionScale;
+            PositiveDefiniteMatrix firstRate;
+            Vector secondLocation;
+            ExtractParameters(out firstShape, out firstRate, out secondLocation, out secondPrecisionScale);
+
+            return string.Format(
+                "a={0}  B={1}  mu={2}  lambda={3}", firstShape, firstRate, secondLocation, secondPrecisionScale);
         }
 
         private void ComputeNaturalStatisticMoments(
