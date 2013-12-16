@@ -28,6 +28,7 @@ namespace SegmentationGrid
     using WishartArray1D = DistributionRefArray<Wishart, PositiveDefiniteMatrix>;
     using WishartArray2D = DistributionRefArray<DistributionRefArray<Wishart, PositiveDefiniteMatrix>, PositiveDefiniteMatrix[]>;
     using ShapePartArray2D = DistributionRefArray<DistributionRefArray<VectorGaussianWishart, ShapePart>, ShapePart[]>;
+    using LabelArray = DistributionRefArray<DistributionStructArray2D<Bernoulli, bool>, bool[,]>;
     
     class Program
     {
@@ -117,26 +118,44 @@ namespace SegmentationGrid
 
             //int shapePartCount = shapeOrientationRates.Length;
 
-            bool[][,] labels = LoadLabels("../../../Data/horses/figure_ground", 10);
+            bool[][,] labels = LoadLabels("../../../Data/horses/figure_ground", 30);
             bool[][,] noisyLabels = labels;// Util.ArrayInit(labels.Length, i => MakeNoisyMask(labels[i], observationNoiseProb));
             const int shapePartCount = 8;
+            const int traitCount = 2;
 
-            // Save samples
+            // Save training set
             for (int i = 0; i < noisyLabels.Length; ++i)
             {
                 ImageHelpers.ArrayToBitmap(noisyLabels[i], b => b ? Color.Red : Color.Green).Save(string.Format("noisy_labels_{0}.png", i));
             }
 
-            LearnShapeModel(noisyLabels[0].GetLength(0), noisyLabels[0].GetLength(1), shapePartCount, noisyLabels, observationNoiseProb, pottsPenalty);
+            var shapeModel = LearnShapeModel(
+                noisyLabels[0].GetLength(0), noisyLabels[0].GetLength(1), shapePartCount, traitCount, noisyLabels, observationNoiseProb, pottsPenalty);
+
+            bool[][,] testLabels = LoadLabels("../../../Data/horses/figure_ground", 30, labels.Length);
+            
+            // Save test set
+            for (int i = 0; i < testLabels.Length; ++i)
+            {
+                ImageHelpers.ArrayToBitmap(testLabels[i], b => b ? Color.Red : Color.Green).Save(string.Format("test_labels_{0}.png", i));
+            }
+
+            CompleteImages(
+                testLabels[0].GetLength(0), testLabels[0].GetLength(1), testLabels, observationNoiseProb, pottsPenalty, shapeModel);
         }
 
-        private static bool[][,] LoadLabels(string path, int maxImagesToLoad)
+        private static bool[][,] LoadLabels(string path, int maxImagesToLoad, int skip = 0)
         {
             List<Bitmap> bitmaps = new List<Bitmap>();
 
             int minWidth = int.MaxValue, minHeight = int.MaxValue;
             foreach (string imagePath in Directory.EnumerateFiles(path))
             {
+                if (skip-- > 0)
+                {
+                    continue;
+                }
+                
                 if (bitmaps.Count == maxImagesToLoad)
                 {
                     break;
@@ -159,94 +178,120 @@ namespace SegmentationGrid
             return result;
         }
 
-        private static bool[][,] SampleNoisyLabels(
+        private static void CompleteImages(
             int gridWidth,
             int gridHeight,
-            Vector[] offsetMeans,
-            Vector[] offsetPrecisions,
-            Gaussian[] shapeLocationPrior,
-            PositiveDefiniteMatrix[] shapePartOrientationRates,
-            double orientationNoiseShape,
+            bool[][,] images,
             double observationNoiseProb,
             double pottsPenalty,
-            int count)
+            ImageModelFactorized.ShapeModelBelief shapeModel)
         {
-            int shapePartCount = offsetMeans.Length;
-
-            //var gridHolder = new ImageModelFullCovariance(gridWidth, gridHeight, shapeParams.Length);
-            var gridHolder = new ImageModelFactorized(gridWidth, gridHeight, shapePartCount, 1);
-
-            // Specify sampling model
-            gridHolder.ShapeLocationMeanPrior.ObservedValue = new GaussianArray1D(Util.ArrayInit(2, i => Gaussian.PointMass(shapeLocationPrior[i].GetMean())));
-            gridHolder.ShapeLocationPrecisionPrior.ObservedValue = new GammaArray1D(Util.ArrayInit(2, i => Gamma.PointMass(shapeLocationPrior[i].Precision)));
-            gridHolder.ShapePartOrientationPriorRates.ObservedValue = shapePartOrientationRates;
-            gridHolder.ShapePartOrientationShape.ObservedValue = orientationNoiseShape;
-            gridHolder.ObservationNoiseProbability.ObservedValue = observationNoiseProb;
+            var gridHolder = new ImageModelFactorized(
+                gridWidth, gridHeight, shapeModel.ShapePartOffsetWeights.Count, shapeModel.ShapePartOffsetWeights[0][0].Count, images.Length);
+            gridHolder.OptimizeForLabelCompletion();
             gridHolder.PottsPenalty.ObservedValue = pottsPenalty;
-            gridHolder.ShapePartOffsetMeans.ObservedValue = Util.ArrayInit(shapePartCount, i => offsetMeans[i].ToArray());
-            gridHolder.ShapePartOffsetPrecisions.ObservedValue = Util.ArrayInit(shapePartCount, i => offsetPrecisions[i].ToArray());
+            gridHolder.ObservationNoiseProbability.ObservedValue = observationNoiseProb;
 
-            return gridHolder.Sample(count);
+            gridHolder.SetShapeModel(shapeModel);
+
+            Bernoulli[][,] constraints = new Bernoulli[images.Length][,];
+            for (int imageIndex = 0; imageIndex < images.Length; ++imageIndex)
+            {
+                constraints[imageIndex] = new Bernoulli[images[imageIndex].GetLength(0), images[imageIndex].GetLength(1)];
+                for (int i = 0; i < images[imageIndex].GetLength(0); ++i)
+                {
+                    for (int j = 0; j < images[imageIndex].GetLength(1); ++j)
+                    {
+                        if (i < images[imageIndex].GetLength(0) / 2)
+                        {
+                            constraints[imageIndex][i, j] = Bernoulli.Uniform();
+                        }
+                        else
+                        {
+                            constraints[imageIndex][i, j] = Bernoulli.PointMass(images[imageIndex][i, j]);
+                        }
+                    }
+                }
+            }
+
+            gridHolder.NoisyLabelsConstraint.ObservedValue = constraints;
+
+            gridHolder.Engine.NumberOfIterations = 1000;
+            var labelsPosterior = gridHolder.Engine.Infer <LabelArray>(gridHolder.Labels);
+            for (int imageIndex = 0; imageIndex < labelsPosterior.Count; ++imageIndex)
+            {
+                Bernoulli[,] labels = Util.ArrayInit(
+                    labelsPosterior[imageIndex].GetLength(0),
+                    labelsPosterior[imageIndex].GetLength(1),
+                    (i, j) => i < images[imageIndex].GetLength(0) / 2 ? labelsPosterior[imageIndex][i, j] : Bernoulli.PointMass(images[imageIndex][i, j]));
+                ImageHelpers.ArrayToBitmap(labels, b => b.IsPointMass ? (b.Point ? Color.Yellow : Color.Green) : PenaltyToColor(b.GetProbTrue(), 0, 1)).Save("./restored_image_" + imageIndex + ".png");
+            }
         }
 
         private static ImageModelFactorized.ShapeModelBelief LearnShapeModel(
             int gridWidth,
             int gridHeight,
             int shapePartCount,
+            int traitCount,
             bool[][,] trainingSet,
             double observationNoiseProb,
             double pottsPenalty)
-        {
+        {            
             int observationCount = trainingSet.Length;
 
-            var gridHolder = new ImageModelFactorized(gridWidth, gridHeight, shapePartCount, observationCount);
+            var gridHolder = new ImageModelFactorized(gridWidth, gridHeight, shapePartCount, traitCount, observationCount);
+            gridHolder.OptimizeForShapeModelLearning();
             gridHolder.PottsPenalty.ObservedValue = pottsPenalty;
             gridHolder.ObservationNoiseProbability.ObservedValue = observationNoiseProb;
-            gridHolder.ObservedLabels.ObservedValue = trainingSet;
+            gridHolder.NoisyLabels.ObservedValue = trainingSet;
 
-            var samplingGridHolder = new ImageModelFactorized(gridWidth, gridHeight, shapePartCount, observationCount);
+            var samplingGridHolder = new ImageModelFactorized(gridWidth, gridHeight, shapePartCount, traitCount, observationCount);
             samplingGridHolder.PottsPenalty.ObservedValue = pottsPenalty;
             samplingGridHolder.ObservationNoiseProbability.ObservedValue = observationNoiseProb;
 
-            for (int iterationCount = 10; iterationCount <= 1000; iterationCount += 50)
+            for (int iterationCount = 100; iterationCount <= 1000; iterationCount += 100)
             {
                 gridHolder.Engine.NumberOfIterations = iterationCount;
 
-                //GaussianArray3D shapePartLocations = gridHolder.Engine.Infer<GaussianArray3D>(gridHolder.ShapePartLocation);
-                //WishartArray2D shapePartOrientations = gridHolder.Engine.Infer<WishartArray2D>(gridHolder.ShapePartOrientation);
-                //for (int i = 0; i < trainingSet.Length; ++i)
+                //GaussianArray2D shapeTraits = gridHolder.Engine.Infer<GaussianArray2D>(gridHolder.ShapeTraits);
+                //for (int i = 0; i < shapeTraits.Count; ++i)
                 //{
-                //    Bitmap drawnShape = DrawShape(
-                //        gridWidth,
-                //        gridHeight,
-                //        Util.ArrayInit(
-                //            shapePartCount, j => Tuple.Create(shapePartOrientations[i][j].GetMean(), Vector.FromArray(shapePartLocations[i][j][0].GetMean(), shapePartLocations[i][j][1].GetMean()))));
-                //    drawnShape.Save(string.Format("fitted_object_{0}_{1}.png", iterationCount, i));
+                //    Console.WriteLine("Image {0} traits:  {1}", i, Util.CollectionToString(shapeTraits[i]));
                 //}
+                
+                GaussianArray3D shapePartLocations = gridHolder.Engine.Infer<GaussianArray3D>(gridHolder.ShapePartLocation);
+                WishartArray2D shapePartOrientations = gridHolder.Engine.Infer<WishartArray2D>(gridHolder.ShapePartOrientation);
+                for (int i = 0; i < trainingSet.Length; ++i)
+                {
+                    Bitmap drawnShape = DrawShape(
+                        gridWidth,
+                        gridHeight,
+                        Util.ArrayInit(
+                            shapePartCount, j => Tuple.Create(shapePartOrientations[i][j].GetMean(), Vector.FromArray(shapePartLocations[i][j][0].GetMean(), shapePartLocations[i][j][1].GetMean()))));
+                    drawnShape.Save(string.Format("fitted_object_{0}_{1}.png", iterationCount, i));
+                }
 
                 // Infer shape model
                 ImageModelFactorized.ShapeModelBelief shapeModel = gridHolder.InferShapeModel();
 
                 // Draw shape model
-                DrawShapeModel(gridWidth, gridHeight, shapeModel.ShapePartOffsetMeans, shapeModel.ShapePartOrientationRates, gridHolder.ShapePartOrientationShape.ObservedValue).Save(string.Format("shape_model_{0}.png", iterationCount));
+                //DrawShapeModel(gridWidth, gridHeight, shapeModel.ShapePartOffsetMeans, shapeModel.ShapePartOrientationRates, gridHolder.ShapePartOrientationShape.ObservedValue).Save(string.Format("shape_model_{0}.png", iterationCount));
                 
                 // Draw samples from shape model
                 samplingGridHolder.SetShapeModel(shapeModel);
-                bool[][,] sampledLabels = samplingGridHolder.Sample(10, false);
-                for (int sample = 0; sample < sampledLabels.Length; ++sample)
+                
+                bool[][,] sampledLabelsCentered = samplingGridHolder.Sample(10, false, false, true);
+                for (int sampleIndex = 0; sampleIndex < sampledLabelsCentered.Length; ++sampleIndex)
                 {
-                    ImageHelpers.ArrayToBitmap(sampledLabels[sample], l => l ? Color.Red : Color.Green).Save("labels_sample_" + sample + ".png");
+                    string sampleFileName = string.Format("labels_centered_sample_{0:000}_{1:00}.png", iterationCount, sampleIndex);
+                    ImageHelpers.ArrayToBitmap(sampledLabelsCentered[sampleIndex], l => l ? Color.Red : Color.Green).Save(sampleFileName);
                 }
 
-                // Print shape model
-                for (int i = 0; i < shapePartCount; ++i)
+                bool[][,] sampledLabels = samplingGridHolder.Sample(10, false, false, false);
+                for (int sampleIndex = 0; sampleIndex < sampledLabelsCentered.Length; ++sampleIndex)
                 {
-                    Console.WriteLine("Shape part {0}", i);
-                    Console.WriteLine("Offset mean X: {0}", shapeModel.ShapePartOffsetMeans[i][0]);
-                    Console.WriteLine("Offset mean Y: {0}", shapeModel.ShapePartOffsetMeans[i][1]);
-                    Console.WriteLine("Offset prec X: {0}", shapeModel.ShapePartOffsetPrecisions[i][0]);
-                    Console.WriteLine("Offset prec Y: {0}", shapeModel.ShapePartOffsetPrecisions[i][1]);
-                    Console.WriteLine();
+                    string sampleFileName = string.Format("labels_sample_{0:000}_{1:00}.png", iterationCount, sampleIndex);
+                    ImageHelpers.ArrayToBitmap(sampledLabels[sampleIndex], l => l ? Color.Red : Color.Green).Save(sampleFileName);
                 }
             }
 
