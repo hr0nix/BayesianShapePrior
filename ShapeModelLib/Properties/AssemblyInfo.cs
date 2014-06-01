@@ -5,11 +5,11 @@ using System.Runtime.InteropServices;
 // General Information about an assembly is controlled through the following 
 // set of attributes. Change these attribute values to modify the information
 // associated with an assembly.
-[assembly: AssemblyTitle("SegmentationGrid")]
+[assembly: AssemblyTitle("ShapeModelLib")]
 [assembly: AssemblyDescription("")]
 [assembly: AssemblyConfiguration("")]
 [assembly: AssemblyCompany("")]
-[assembly: AssemblyProduct("SegmentationGrid")]
+[assembly: AssemblyProduct("ShapeModelLib")]
 [assembly: AssemblyCopyright("Copyright ©  2013")]
 [assembly: AssemblyTrademark("")]
 [assembly: AssemblyCulture("")]
@@ -20,7 +20,7 @@ using System.Runtime.InteropServices;
 [assembly: ComVisible(false)]
 
 // The following GUID is for the ID of the typelib if this project is exposed to COM
-[assembly: Guid("893739db-2450-4f61-a255-e5c8d3d261fe")]
+[assembly: Guid("b9aae95f-ecce-4337-a3b9-56768403341f")]
 
 // Version information for an assembly consists of the following four values:
 //

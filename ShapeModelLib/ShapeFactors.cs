@@ -48,6 +48,147 @@ namespace SegmentationGrid
         {
             return Tuple.Create(orientation, Vector.FromArray(positionX, positionY));
         }
+
+        [ParameterNames("Matrix", "logScaleX", "logScaleY", "angle")]
+        public static PositiveDefiniteMatrix MatrixFromAngleScale(double logScaleX, double logScaleY, double angle)
+        {
+            if (angle < -Math.PI / 4 || angle > Math.PI / 4)
+            {
+                throw new ConstraintViolatedException("Bad angle.");
+            }
+            
+            Matrix scaleInvMatrix = new Matrix(2, 2);
+            scaleInvMatrix[0, 0] = Math.Exp(-logScaleX);
+            scaleInvMatrix[1, 1] = Math.Exp(-logScaleY);
+
+            Matrix rotationMatrix = new Matrix(2, 2);
+            rotationMatrix[0, 0] = Math.Cos(angle);
+            rotationMatrix[0, 1] = -Math.Sin(angle);
+            rotationMatrix[1, 0] = Math.Sin(angle);
+            rotationMatrix[1, 1] = Math.Cos(angle);
+
+            return new PositiveDefiniteMatrix(rotationMatrix * scaleInvMatrix * scaleInvMatrix * rotationMatrix.Transpose());
+        }
+    }
+
+    [FactorMethod(typeof(ShapeFactors), "MatrixFromAngleScale")]
+    public static class MatrixFromAngleScaleOps
+    {
+        public static Wishart MatrixAverageConditional(Wishart matrix, Gaussian angle, Gaussian logScaleX, Gaussian logScaleY, Wishart result)
+        {
+            if (!matrix.IsPointMass)
+            {
+                throw new NotImplementedException();
+            }
+            
+            Func<Matrix, double> logF = 
+                p =>
+                {
+                    double lsx, lsy, a;
+                    ExtractScaleAngle(p, out lsx, out lsy, out a);
+
+                    return angle.GetLogProb(a) + logScaleX.GetLogProb(lsx) + logScaleY.GetLogProb(lsy);
+                };
+
+            Func<Matrix, double> trXdLogF =
+                p =>
+                {
+                    return (p * MatrixDerivative(p, logF)).Trace();
+                };
+
+            Matrix dLogF = MatrixDerivative(matrix.Point, logF);
+            Matrix dTrXdLogF = MatrixDerivative(matrix.Point, trXdLogF);
+            double trXdTrXdLogF = (matrix.Point * dTrXdLogF).Trace();
+
+            LowerTriangularMatrix cholesky = new LowerTriangularMatrix(2, 2);
+            cholesky.SetToCholesky(matrix.Point);
+            PositiveDefiniteMatrix inverse = matrix.Point.Inverse();
+            result.SetDerivatives(cholesky, inverse, new PositiveDefiniteMatrix(dLogF), trXdTrXdLogF, forceProper: true);
+
+            return result;
+        }
+
+        public static Gaussian AngleAverageConditional(Wishart matrix)
+        {
+            if (!matrix.IsPointMass)
+            {
+                throw new NotImplementedException();
+            }
+
+            double logScaleX, logScaleY, angle;
+            ExtractScaleAngle(matrix.Point, out logScaleX, out logScaleY, out angle);
+
+            return Gaussian.PointMass(angle);
+        }
+
+        public static Gaussian LogScaleXAverageConditional(Wishart matrix)
+        {
+            if (!matrix.IsPointMass)
+            {
+                throw new NotImplementedException();
+            }
+
+            double logScaleX, logScaleY, angle;
+            ExtractScaleAngle(matrix.Point, out logScaleX, out logScaleY, out angle);
+
+            return Gaussian.PointMass(logScaleX);
+        }
+
+        public static Gaussian LogScaleYAverageConditional(Wishart matrix)
+        {
+            if (!matrix.IsPointMass)
+            {
+                throw new NotImplementedException();
+            }
+
+            double logScaleX, logScaleY, angle;
+            ExtractScaleAngle(matrix.Point, out logScaleX, out logScaleY, out angle);
+
+            return Gaussian.PointMass(logScaleY);
+        }
+
+        private static Matrix MatrixDerivative(Matrix point, Func<Matrix, double> f, double step = 0.0001)
+        {
+            Matrix result = new Matrix(point.Rows, point.Cols);
+            for (int row = 0; row < point.Rows; ++row)
+            {
+                for (int column = 0; column < point.Cols; ++column)
+                {
+                    Matrix pointMinusEps = (Matrix)point.Clone();
+                    pointMinusEps[row, column] -= step;
+                    Matrix pointMinus2Eps = (Matrix)point.Clone();
+                    pointMinusEps[row, column] -= 2 * step;
+                    Matrix pointPlusEps = (Matrix)point.Clone();
+                    pointPlusEps[row, column] += step;
+                    Matrix pointPlus2Eps = (Matrix)point.Clone();
+                    pointPlus2Eps[row, column] += 2 * step;
+
+                    result[row, column] = (-f(pointPlus2Eps) + 8 * f(pointPlusEps) - 8 * f(pointMinusEps) + f(pointMinus2Eps)) / (12 * step);
+                }
+            }
+
+            return result;
+        }
+
+        private static void ExtractScaleAngle(Matrix matrix, out double logScaleX, out double logScaleY, out double angle)
+        {
+            double w11 = matrix[0, 0];
+            double w12 = matrix[0, 1];
+            double w21 = matrix[1, 0];
+            double w22 = matrix[1, 1];
+            double tg2a = Math.Abs(w11 - w22) < 1e-8 ? 0 : (w12 + w21) / (w11 - w22);
+            
+            angle = 0.5 * Math.Atan(tg2a); // angle is guaranteed to be in [-pi/4, pi/4] range
+
+            double d1 = w11 + w22;
+            double d2 = (w11 - w22) * Math.Sqrt(1 + tg2a * tg2a);
+            
+            logScaleX = 0.5 * (MMath.Ln2 - Math.Log(d1 + d2));
+            logScaleY = 0.5 * (MMath.Ln2 - Math.Log(d1 - d2));
+
+            Debug.Assert(!double.IsNaN(logScaleX) && !double.IsNaN(logScaleY) && !double.IsNaN(angle));
+            Debug.Assert(angle > -Math.PI / 4 && angle < Math.PI / 4);
+        }
     }
 
     // This not really an EP op!
